@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PDF Chat Assistant</title>
+<style>
+body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; }
+button, input[type="file"] { margin: 5px 0; }
+textarea { width: 100%; height: 150px; }
+#response { background: #f4f4f4; padding: 10px; margin-top: 10px; }
+label.switch {
+  position: relative; display: inline-block; width: 60px; height: 34px;
+}
+label.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #ccc; transition: .4s;
+}
+.slider:before {
+  position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px;
+  background-color: white; transition: .4s;
+}
+input:checked + .slider { background-color: #2196F3; }
+input:checked + .slider:before { transform: translateX(26px); }
+.slider.round { border-radius: 34px; }
+.slider.round:before { border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<h2>PDF Chat Assistant</h2>
+
+<form id="uploadForm">
+    <input type="file" name="pdf" id="pdf">
+    <button type="submit">Upload PDF</button>
+</form>
+
+<br>
+
+<textarea id="query" placeholder="Ask your question here …"></textarea>
+<br>
+<button onclick="ask()">Ask</button>
+
+<div id="response"></div>
+
+<hr>
+
+<h4>Modes</h4>
+
+<div>
+  <strong>Offline Only (disable online search)</strong>
+  <label class="switch">
+    <input type="checkbox" id="offlineToggle" onchange="toggleOffline()">
+    <span class="slider round"></span>
+  </label>
+  <span id="offlineStatus">Offline Only: Off</span>
+</div>
+
+<div>
+  <strong>GPU Only (disable CPU)</strong>
+  <label class="switch">
+    <input type="checkbox" id="gpuToggle" onchange="toggleGPU()">
+    <span class="slider round"></span>
+  </label>
+  <span id="gpuStatus">GPU Only: Off</span>
+</div>
+
+<script>
+document.getElementById("uploadForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const formData = new FormData();
+    formData.append("pdf", document.getElementById("pdf").files[0]);
+    fetch("/upload", { method: "POST", body: formData })
+        .then(res => res.json())
+        .then(data => alert(data.message));
+});
+
+function ask() {
+    const q = document.getElementById("query").value;
+    fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q })
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("response").innerText = data.response;
+    });
+}
+
+function toggleOffline() {
+    const offlineOnly = document.getElementById("offlineToggle").checked;
+    fetch("/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ offline: offlineOnly })
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("offlineStatus").innerText = `Offline Only: ${data.offline_only ? 'On' : 'Off'}`;
+    });
+}
+
+function toggleGPU() {
+    const gpuOnly = document.getElementById("gpuToggle").checked;
+    fetch("/toggle_gpu", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gpu_only: gpuOnly })
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("gpuStatus").innerText = `GPU Only: ${data.gpu_only ? 'On' : 'Off'}`;
+    });
+}
+
+// Initialize toggle state
+fetch("/status")
+    .then(res => res.json())
+    .then(status => {
+        document.getElementById("offlineToggle").checked = status.offline_only;
+        document.getElementById("offlineStatus").innerText = `Offline Only: ${status.offline_only ? 'On' : 'Off'}`;
+
+        document.getElementById("gpuToggle").checked = status.gpu_only;
+        document.getElementById("gpuStatus").innerText = `GPU Only: ${status.gpu_only ? 'On' : 'Off'}`;
+    });
+</script>
+
+</body>
+</html>

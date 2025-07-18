@@ -1,0 +1,12 @@
+flask
+chromadb
+pdfminer.six
+sentence-transformers
+torch
+transformers
+openai
+google-api-python-client
+python-dotenv
+openai
+tqdm
+numpy
