@@ -8,9 +8,10 @@ deactivate
 
 
 
+pip install -r requirements.txt
 
 
-
+make a folder called as the uploads
 
 -----read me
 # Google Custom Search
