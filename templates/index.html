@@ -2,128 +2,153 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>PDF Chat Assistant</title>
+<title>Promply V2</title>
 <style>
-body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; }
-button, input[type="file"] { margin: 5px 0; }
-textarea { width: 100%; height: 150px; }
-#response { background: #f4f4f4; padding: 10px; margin-top: 10px; }
-label.switch {
-  position: relative; display: inline-block; width: 60px; height: 34px;
-}
-label.switch input { opacity: 0; width: 0; height: 0; }
-.slider {
-  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
-  background-color: #ccc; transition: .4s;
-}
-.slider:before {
-  position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px;
-  background-color: white; transition: .4s;
-}
-input:checked + .slider { background-color: #2196F3; }
-input:checked + .slider:before { transform: translateX(26px); }
-.slider.round { border-radius: 34px; }
-.slider.round:before { border-radius: 50%; }
+    body {
+        font-family: Arial, sans-serif;
+        background-color: #f8f9fa;
+        margin: 0;
+        padding: 0;
+    }
+
+    .container {
+        max-width: 800px;
+        margin: 30px auto;
+        padding: 20px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+
+    h1 {
+        text-align: center;
+        color: #333;
+    }
+
+    .form-section {
+        margin-bottom: 20px;
+    }
+
+    .form-section input[type="file"] {
+        display: block;
+        margin-bottom: 10px;
+    }
+
+    .form-section button {
+        background-color: #007bff;
+        color: #fff;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .form-section button:hover {
+        background-color: #0056b3;
+    }
+
+    .toggle {
+        margin: 15px 0;
+    }
+
+    .toggle label {
+        font-size: 0.95em;
+        color: #555;
+    }
+
+    textarea {
+        width: 100%;
+        height: 100px;
+        margin-bottom: 10px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        resize: vertical;
+        font-family: Arial, sans-serif;
+    }
+
+    .chat-section button {
+        background-color: #28a745;
+        color: #fff;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .chat-section button:hover {
+        background-color: #218838;
+    }
+
+    #chat-response {
+        margin-top: 20px;
+        background-color: #f1f3f4;
+        padding: 15px;
+        border-radius: 4px;
+        min-height: 50px;
+        white-space: pre-wrap;
+    }
 </style>
 </head>
 <body>
 
-<h2>PDF Chat Assistant</h2>
+<div class="container">
+    <h1>Promply V2</h1>
 
-<form id="uploadForm">
-    <input type="file" name="pdf" id="pdf">
-    <button type="submit">Upload PDF</button>
-</form>
+    <div class="form-section">
+        <form id="upload-form">
+            <input type="file" name="pdf" accept=".pdf" required>
+            <button type="submit">Upload PDF</button>
+        </form>
+    </div>
 
-<br>
+    <div class="toggle">
+        <label>
+            <input type="checkbox" id="offline-toggle" checked>
+            Offline mode only (disable online search)
+        </label>
+    </div>
 
-<textarea id="query" placeholder="Ask your question here …"></textarea>
-<br>
-<button onclick="ask()">Ask</button>
+    <div class="chat-section">
+        <textarea id="query" placeholder="Ask your question..."></textarea>
+        <button id="ask-btn">Ask</button>
+    </div>
 
-<div id="response"></div>
-
-<hr>
-
-<h4>Modes</h4>
-
-<div>
-  <strong>Offline Only (disable online search)</strong>
-  <label class="switch">
-    <input type="checkbox" id="offlineToggle" onchange="toggleOffline()">
-    <span class="slider round"></span>
-  </label>
-  <span id="offlineStatus">Offline Only: Off</span>
-</div>
-
-<div>
-  <strong>GPU Only (disable CPU)</strong>
-  <label class="switch">
-    <input type="checkbox" id="gpuToggle" onchange="toggleGPU()">
-    <span class="slider round"></span>
-  </label>
-  <span id="gpuStatus">GPU Only: Off</span>
+    <div id="chat-response"></div>
 </div>
 
 <script>
-document.getElementById("uploadForm").addEventListener("submit", function(e) {
+document.getElementById("upload-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const formData = new FormData();
-    formData.append("pdf", document.getElementById("pdf").files[0]);
-    fetch("/upload", { method: "POST", body: formData })
-        .then(res => res.json())
-        .then(data => alert(data.message));
+    const formData = new FormData(e.target);
+    const res = await fetch("/upload", {
+        method: "POST",
+        body: formData
+    });
+    const data = await res.json();
+    alert(data.message);
 });
 
-function ask() {
-    const q = document.getElementById("query").value;
-    fetch("/chat", {
+document.getElementById("ask-btn").addEventListener("click", async () => {
+    const query = document.getElementById("query").value.trim();
+    if (!query) return;
+    const res = await fetch("/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q })
-    })
-    .then(res => res.json())
-    .then(data => {
-        document.getElementById("response").innerText = data.response;
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({query})
     });
-}
+    const data = await res.json();
+    document.getElementById("chat-response").textContent = data.response;
+});
 
-function toggleOffline() {
-    const offlineOnly = document.getElementById("offlineToggle").checked;
-    fetch("/toggle", {
+document.getElementById("offline-toggle").addEventListener("change", async (e) => {
+    const offline = e.target.checked;
+    await fetch("/toggle", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ offline: offlineOnly })
-    })
-    .then(res => res.json())
-    .then(data => {
-        document.getElementById("offlineStatus").innerText = `Offline Only: ${data.offline_only ? 'On' : 'Off'}`;
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({offline})
     });
-}
-
-function toggleGPU() {
-    const gpuOnly = document.getElementById("gpuToggle").checked;
-    fetch("/toggle_gpu", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gpu_only: gpuOnly })
-    })
-    .then(res => res.json())
-    .then(data => {
-        document.getElementById("gpuStatus").innerText = `GPU Only: ${data.gpu_only ? 'On' : 'Off'}`;
-    });
-}
-
-// Initialize toggle state
-fetch("/status")
-    .then(res => res.json())
-    .then(status => {
-        document.getElementById("offlineToggle").checked = status.offline_only;
-        document.getElementById("offlineStatus").innerText = `Offline Only: ${status.offline_only ? 'On' : 'Off'}`;
-
-        document.getElementById("gpuToggle").checked = status.gpu_only;
-        document.getElementById("gpuStatus").innerText = `GPU Only: ${status.gpu_only ? 'On' : 'Off'}`;
-    });
+});
 </script>
 
 </body>
