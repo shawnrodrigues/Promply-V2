@@ -192,3 +192,7 @@ def search_online(query):
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+# ================================
+# === Made with ❤️ by CoCo ===
+# ================================
