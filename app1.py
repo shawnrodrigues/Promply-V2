@@ -161,8 +161,6 @@ def status():
     except:
         count = "unknown"
     return jsonify({
-        "embedding_device": device,
-        "llm_gpu_layers": llm_gpu_layers,
         "offline_only": OFFLINE_ONLY,
         "collection_documents": count
     })
@@ -180,9 +178,30 @@ def search_online(query):
 
     if google_api_key and google_cx:
         service = build("customsearch", "v1", developerKey=google_api_key)
-        res = service.cse().list(q=query, cx=google_cx).execute()
+        res = service.cse().list(q=query, cx=google_cx, num=5).execute()
         if 'items' in res:
-            return res['items'][0]['snippet']
+            snippets = [item['snippet'] for item in res['items']]
+            context = "\n\n".join(snippets)
+
+            # Use LLaMA to generate an answer from online context
+            prompt = f"""
+You are a helpful assistant. Use the following online search results to answer the question.
+
+Search Results:
+\"\"\"
+{context}
+\"\"\"
+
+Question: {query}
+Answer:"""
+
+            try:
+                output = llm(prompt, max_tokens=300, stop=["\n"])
+                answer = output['choices'][0]['text'].strip()
+                return answer
+            except Exception as e:
+                return f"Error generating answer from online results: {e}"
+
         else:
             return "No results found online."
     elif gemini_api_key:
@@ -191,6 +210,13 @@ def search_online(query):
         return "No online search configured."
 
 if __name__ == "__main__":
+    import webbrowser
+    from threading import Timer
+
+    def open_browser():
+        webbrowser.open_new("http://127.0.0.1:5000/")
+
+    Timer(1.5, open_browser).start()
     app.run(debug=True)
 
 # ================================
