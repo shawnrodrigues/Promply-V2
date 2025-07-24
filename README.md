@@ -20,6 +20,39 @@ pip install -r requirements.txt
 
 make a folder called as the uploads
 
+
+
+
+<<<<<<< Promply-OCR
+
+
+
+
+
+
+🩷 1️⃣ Open the file
+
+P:\Promply-V2\myenv\Scripts\Activate.ps1
+in your editor (VS Code, Notepad++, …).
+
+🩷 2️⃣ Add Tesseract to PATH
+At the end of the file, add this line:
+
+
+$env:PATH = "C:\Program Files\Tesseract-OCR;$env:PATH"
+
+deactivate
+.\myenv\Scripts\activate
+
+
+tesseract --version
+
+
+
+
+=======
+>>>>>>> main
+
 -----read me----
 the .env file
 
