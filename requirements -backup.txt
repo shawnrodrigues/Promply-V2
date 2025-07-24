@@ -10,3 +10,7 @@ python-dotenv
 openai
 tqdm
 numpy
+PyMuPDF 
+httptools
+langchain
+llama-cpp-python
