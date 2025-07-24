@@ -23,7 +23,6 @@ make a folder called as the uploads
 
 
 
-<<<<<<< Promply-OCR
 
 
 
@@ -50,8 +49,6 @@ tesseract --version
 
 
 
-=======
->>>>>>> main
 
 -----read me----
 the .env file
