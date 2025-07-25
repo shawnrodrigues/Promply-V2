@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     
     // Forward the request to your Flask backend
-    const response = await fetch('http://localhost:5000/toggle', {
+    const response = await fetch('http://localhost:6969/toggle', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Toggle proxy error:', error);
     return NextResponse.json(
-      { error: 'Failed to toggle mode. Make sure Flask server is running on port 5000.' }, 
+      { error: 'Failed to toggle mode. Make sure Flask server is running on port 6969.' }, 
       { status: 500 }
     );
   }

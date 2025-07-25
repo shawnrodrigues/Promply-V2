@@ -183,7 +183,6 @@ def search_online(query):
             snippets = [item['snippet'] for item in res['items']]
             context = "\n\n".join(snippets)
 
-            # Use LLaMA to generate an answer from online context
             prompt = f"""
 You are a helpful assistant. Use the following online search results to answer the question.
 
@@ -210,14 +209,7 @@ Answer:"""
         return "No online search configured."
 
 if __name__ == "__main__":
-    import webbrowser
-    from threading import Timer
-
-    def open_browser():
-        webbrowser.open_new("http://127.0.0.1:5000/")
-
-    Timer(1.5, open_browser).start()
-    app.run(debug=True)
+    app.run(debug=True, port=6969)
 
 # ================================
 # === Made with ❤️ by CoCo ===

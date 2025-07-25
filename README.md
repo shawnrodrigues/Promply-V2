@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 
 make a folder called as the uploads
-
+make a folder called models
 
 
 

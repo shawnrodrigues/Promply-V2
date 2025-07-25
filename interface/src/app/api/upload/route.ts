@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     
     // Forward the request to your Flask backend
-    const response = await fetch('http://localhost:5000/upload', {
+    const response = await fetch('http://localhost:6969/upload', {
       method: 'POST',
       body: formData,
     });
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Upload proxy error:', error);
     return NextResponse.json(
-      { error: 'Failed to upload file. Make sure Flask server is running on port 5000.' }, 
+      { error: 'Failed to upload file. Make sure Flask server is running on port 6969.' }, 
       { status: 500 }
     );
   }

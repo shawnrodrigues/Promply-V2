@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     
     // Forward the request to your Flask backend
-    const response = await fetch('http://localhost:5000/chat', {
+    const response = await fetch('http://localhost:6969/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Chat proxy error:', error);
     return NextResponse.json(
-      { error: 'Failed to connect to AI service. Make sure Flask server is running on port 5000.' }, 
+      { error: 'Failed to connect to AI service. Make sure Flask server is running on port 6969.' }, 
       { status: 500 }
     );
   }
