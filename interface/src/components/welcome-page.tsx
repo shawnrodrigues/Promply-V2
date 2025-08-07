@@ -101,7 +101,6 @@ export default function WelcomePage() {
     e.preventDefault();
   };
 
-  // Real chat with backend via Next.js API
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -137,7 +136,6 @@ export default function WelcomePage() {
     }
   };
 
-  // Toggle offline mode with backend via Next.js API
   const handleToggleMode = async () => {
     const newOfflineMode = !isOfflineMode;
     setIsOfflineMode(newOfflineMode);

@@ -11,6 +11,7 @@ Before installation, make sure you have:
 - ✅ [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) installed  
 - ✅ [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) installed  
 - ✅ [Python 3.11](https://www.python.org/downloads/release/python-3110/) installed  
+- ✅ [Google Drive](https://drive.google.com/drive/folders/1ICX0rQ5p6aZtJb6kw5YfYMc2m7atXvdo?usp=sharing) Models
 
 ---
 
@@ -106,6 +107,26 @@ After setup, start the application with:
 python app.py
 
 ```
+
+## Images
+
+Contents of the code
+
+![Contents](Images/Contents.png)
+
+Landing Page
+
+![landing Page](<Images/Landing UI.png>)
+
+Uploading UI
+
+![Uploading Page](<Images/Upload UI.png>)
+
+Progress Bar/UI
+
+![Progress UI](<Images/UI Progress.png>)
+
+---
 
 ## ✅ Done!
 You are now ready to run Promply-V2 🎉

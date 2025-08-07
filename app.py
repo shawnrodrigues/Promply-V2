@@ -5,66 +5,80 @@ import chromadb
 import torch
 from sentence_transformers import SentenceTransformer
 from pdfminer.high_level import extract_text
-from googleapiclient.discovery import build
 from llama_cpp import Llama
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from tqdm import tqdm
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+import io
+from googleapiclient.discovery import build
 
-# Load .env
 load_dotenv()
 
-# Config
 UPLOAD_FOLDER = 'uploads'
+IMAGE_FOLDER = 'uploads/images'
 VECTORDB_FOLDER = 'vector_store'
-OFFLINE_ONLY = True
-GPU_ONLY = True  # ✅ new toggle
 
 MODEL_PATH = "models/mistral-7b-instruct-v0.2.Q5_K_M.gguf"
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(IMAGE_FOLDER, exist_ok=True)
 os.makedirs(VECTORDB_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Detect GPU and initialize embedding model
-device = "cuda" if torch.cuda.is_available() else "cpu"
-if GPU_ONLY and device != "cuda":
-    raise RuntimeError("🚫 GPU_ONLY is enabled but no CUDA GPU was detected!")
+# ✅ Always use GPU for embedding
+if not torch.cuda.is_available():
+    raise RuntimeError("❌ CUDA not available — GPU required for this app.")
 
-print(f"✅ SentenceTransformer initialized on: {device}")
-embed_model_name = "all-mpnet-base-v2"
-embed_model = SentenceTransformer(embed_model_name, device=device)
+device = "cuda"
+print(f"✅ SentenceTransformer running on: {device}")
+embed_model = SentenceTransformer("all-mpnet-base-v2", device=device)
+
+OFFLINE_ONLY = True  # default state of online/offline toggle
 
 def embed_text(text):
     return embed_model.encode([text])[0]
 
-def parse_pdf(path):
+def parse_pdf_text(path):
     return extract_text(path)
 
-# ChromaDB client
+def extract_images_and_ocr(pdf_path):
+    doc = fitz.open(pdf_path)
+    image_texts = []
+    for page_number in range(len(doc)):
+        page = doc.load_page(page_number)
+        images = page.get_images(full=True)
+        for img_index, img in enumerate(images):
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            image = Image.open(io.BytesIO(image_bytes))
+            text = pytesseract.image_to_string(image)
+            image_texts.append(text)
+    return "\n".join(image_texts)
+
 chroma_client = chromadb.PersistentClient(path=VECTORDB_FOLDER)
 
-# ✅ Auto-detect and fix collection dimension mismatch
 def get_or_recreate_collection(client, name, expected_dim):
     try:
         col = client.get_collection(name=name)
         dummy_vec = embed_text("test")
         if len(dummy_vec) != expected_dim:
-            print(f"⚠️ Detected embedding dimension mismatch: expected {expected_dim}, got {len(dummy_vec)}. Recreating collection.")
             client.delete_collection(name)
             col = client.create_collection(name=name)
         return col
     except Exception:
         return client.create_collection(name=name)
 
-expected_dim = SentenceTransformer(embed_model_name).get_sentence_embedding_dimension()
+expected_dim = embed_model.get_sentence_embedding_dimension()
 collection = get_or_recreate_collection(chroma_client, "manuals", expected_dim)
 
-# Local LLM
 llm_ctx = 4096
-llm_gpu_layers = -1 if GPU_ONLY else 0  # ✅ use all GPU layers if GPU_ONLY
-print(f"✅ Initializing LLaMA on {'GPU' if llm_gpu_layers != 0 else 'CPU'} …")
+llm_gpu_layers = -1  # fully use GPU
+print("✅ Initializing LLaMA … with GPU only.")
 llm = Llama(
     model_path=MODEL_PATH,
     n_gpu_layers=llm_gpu_layers,
@@ -81,15 +95,18 @@ def upload():
     if file:
         path = os.path.join(UPLOAD_FOLDER, file.filename)
         file.save(path)
-        text = parse_pdf(path)
+
+        text = parse_pdf_text(path)
+        image_text = extract_images_and_ocr(path)
+        combined_text = text + "\n" + image_text
 
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=100
         )
-        chunks = text_splitter.split_text(text)
+        chunks = text_splitter.split_text(combined_text)
 
-        print(f"📄 PDF split into {len(chunks)} chunks. Adding to vector DB (embeddings on {device}) …")
+        print(f"📄 PDF split into {len(chunks)} chunks. Adding to vector DB …")
         for idx, chunk in tqdm(enumerate(chunks), total=len(chunks), desc="🔷 Processing chunks"):
             collection.add(
                 documents=[chunk],
@@ -137,32 +154,6 @@ Answer:"""
     except Exception as e:
         return f"Error generating answer: {e}"
 
-@app.route("/toggle", methods=["POST"])
-def toggle():
-    global OFFLINE_ONLY
-    OFFLINE_ONLY = request.json["offline"]
-    return jsonify({"status": "ok", "offline_only": OFFLINE_ONLY})
-
-@app.route("/toggle_gpu", methods=["POST"])
-def toggle_gpu():
-    global GPU_ONLY, llm_gpu_layers, llm, embed_model, device
-    GPU_ONLY = request.json["gpu_only"]
-    print(f"🔄 Toggling GPU_ONLY to {GPU_ONLY}")
-
-    # re-init device & embed_model
-    device = "cuda" if torch.cuda.is_available() and GPU_ONLY else "cpu"
-    embed_model = SentenceTransformer(embed_model_name, device=device)
-
-    # re-init llm
-    llm_gpu_layers = -1 if GPU_ONLY else 0
-    llm = Llama(
-        model_path=MODEL_PATH,
-        n_gpu_layers=llm_gpu_layers,
-        n_ctx=llm_ctx
-    )
-
-    return jsonify({"status": "ok", "gpu_only": GPU_ONLY})
-
 @app.route("/status", methods=["GET"])
 def status():
     try:
@@ -170,16 +161,15 @@ def status():
     except:
         count = "unknown"
     return jsonify({
-        "embedding_model": embed_model_name,
-        "embedding_device": device,
-        "embedding_dim": expected_dim,
-        "llm_model": os.path.basename(MODEL_PATH),
-        "llm_gpu_layers": llm_gpu_layers,
-        "llm_context_length": llm_ctx,
         "offline_only": OFFLINE_ONLY,
-        "gpu_only": GPU_ONLY,
         "collection_documents": count
     })
+
+@app.route("/toggle", methods=["POST"])
+def toggle():
+    global OFFLINE_ONLY
+    OFFLINE_ONLY = request.json["offline"]
+    return jsonify({"status": "ok", "offline_only": OFFLINE_ONLY})
 
 def search_online(query):
     google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -188,9 +178,29 @@ def search_online(query):
 
     if google_api_key and google_cx:
         service = build("customsearch", "v1", developerKey=google_api_key)
-        res = service.cse().list(q=query, cx=google_cx).execute()
+        res = service.cse().list(q=query, cx=google_cx, num=5).execute()
         if 'items' in res:
-            return res['items'][0]['snippet']
+            snippets = [item['snippet'] for item in res['items']]
+            context = "\n\n".join(snippets)
+
+            prompt = f"""
+You are a helpful assistant. Use the following online search results to answer the question.
+
+Search Results:
+\"\"\"
+{context}
+\"\"\"
+
+Question: {query}
+Answer:"""
+
+            try:
+                output = llm(prompt, max_tokens=300, stop=["\n"])
+                answer = output['choices'][0]['text'].strip()
+                return answer
+            except Exception as e:
+                return f"Error generating answer from online results: {e}"
+
         else:
             return "No results found online."
     elif gemini_api_key:
@@ -199,4 +209,8 @@ def search_online(query):
         return "No online search configured."
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=6969)
+
+# ================================
+# === Made with ❤️ by CoCo ===
+# ================================
