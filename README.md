@@ -12,6 +12,7 @@ Before installation, make sure you have:
 - ✅ [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) installed  
 - ✅ [Python 3.11](https://www.python.org/downloads/release/python-3110/) installed  
 - ✅ [Google Drive](https://drive.google.com/drive/folders/1ICX0rQ5p6aZtJb6kw5YfYMc2m7atXvdo?usp=sharing) Models
+- ✅ [Google Drive 2](https://drive.google.com/drive/folders/1pvCsdTdeqOpFGVWut3DPHhPdMHY3fF-P?usp=sharing) Models 2
 
 ---
 
