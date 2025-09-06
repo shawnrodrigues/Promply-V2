@@ -14,15 +14,15 @@
 ---
 
 #### 🛠 Improvements
-- [ ] Auto-refresh document status after upload
-- [ ] GPU memory usage optimization
-- [ ] Offline mode toggle in frontend
+- [x] Auto-refresh document status after upload
+- [x] GPU memory usage optimization
+- [x] Offline mode toggle in frontend
 - [ ] Enhance UI responsiveness on mobile devices
 
 ---
 
 #### 📝 Documentation
-- [ ] Developer setup guide
+- [x] Developer setup guide
 - [ ] API endpoints (if any)
 - [ ] Contribution guidelines
 

@@ -113,6 +113,32 @@ python app.py
 
 Contents of the code
 
+```
+PROMPLY-V2
+├── data/
+├── Images/
+├── interface/
+├── models/
+├── myenv/
+├── Test Interface/
+│   └── index.html
+├── uploads/
+│   └── images/
+├── vector_store/
+├── .env.example
+├── .gitignore
+├── app.py
+├── env
+├── package-lock.json
+├── README OLD.md
+├── README.md
+├── requirements-backup.txt
+├── requirements.txt
+├── tesseract-installer.exe
+└── TODO.md
+
+```
+
 ![Contents](Images/Contents.png)
 
 Landing Page
