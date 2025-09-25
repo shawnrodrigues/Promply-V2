@@ -39,6 +39,17 @@ embed_model = SentenceTransformer("all-mpnet-base-v2", device=device)
 
 OFFLINE_ONLY = True  # default state of online/offline toggle
 
+# Console logging for initial mode
+print("=" * 60)
+print("🚀 PROMPTLY AI DOCUMENT ASSISTANT STARTING...")
+print("=" * 60)
+print(f"📡 Initial Mode: {'🔒 OFFLINE MODE' if OFFLINE_ONLY else '🌐 ONLINE MODE'}")
+if OFFLINE_ONLY:
+    print("   └── Using local AI models only")
+else:
+    print("   └── Using cloud AI services")
+print("=" * 60)
+
 def embed_text(text):
     return embed_model.encode([text])[0]
 
@@ -93,6 +104,9 @@ def index():
 def upload():
     file = request.files["pdf"]
     if file:
+        mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
+        print(f"\n📄 [{mode_indicator}] Processing upload: {file.filename}")
+        
         path = os.path.join(UPLOAD_FOLDER, file.filename)
         file.save(path)
 
@@ -113,13 +127,21 @@ def upload():
                 embeddings=[embed_text(chunk)],
                 ids=[f"{file.filename}_{idx}"]
             )
-        print("✅ Upload and processing complete.")
-        return jsonify({"status": "success", "message": "✅ PDF uploaded & processed"})
+        print(f"✅ [{mode_indicator}] Upload and processing complete for: {file.filename}")
+        return jsonify({
+            "status": "success", 
+            "message": f"✅ PDF uploaded & processed in {new_mode} mode",
+            "mode": "offline" if OFFLINE_ONLY else "online"
+        })
     return jsonify({"status": "error", "message": "No file uploaded"})
 
 @app.route("/chat", methods=["POST"])
 def chat():
     query = request.json["query"]
+    
+    # Log the query with mode indicator
+    mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
+    print(f"\n💬 [{mode_indicator}] Processing query: '{query[:50]}{'...' if len(query) > 50 else ''}'")
 
     results = collection.query(
         query_embeddings=[embed_text(query)],
@@ -128,10 +150,15 @@ def chat():
     context = "\n".join(results['documents'][0])
 
     if not context and not OFFLINE_ONLY:
-        return jsonify({"response": search_online(query)})
+        print("   └── No local context found, searching online...")
+        response = search_online(query)
+        print("   └── ✅ Online search completed")
+        return jsonify({"response": response})
     elif not context:
+        print("   └── ❌ No relevant information found in local documents")
         return jsonify({"response": "No relevant information found in uploaded manuals."})
-
+    
+    print("   └── ✅ Using local document context")
     response_text = generate_answer(context, query)
     return jsonify({"response": response_text})
 
@@ -160,23 +187,58 @@ def status():
         count = len(collection.get(ids=None)["ids"])
     except:
         count = "unknown"
+    
+    mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
+    print(f"\n📊 [{mode_indicator}] Status check - Documents: {count}")
+    
     return jsonify({
         "offline_only": OFFLINE_ONLY,
-        "collection_documents": count
+        "collection_documents": count,
+        "mode": "offline" if OFFLINE_ONLY else "online"
     })
 
 @app.route("/toggle", methods=["POST"])
 def toggle():
     global OFFLINE_ONLY
-    OFFLINE_ONLY = request.json["offline"]
-    return jsonify({"status": "ok", "offline_only": OFFLINE_ONLY})
+    new_offline_mode = request.json["offline"]
+    previous_mode = "OFFLINE" if OFFLINE_ONLY else "ONLINE"
+    new_mode = "OFFLINE" if new_offline_mode else "ONLINE"
+    
+    print("\n" + "=" * 50)
+    print(f"🔄 MODE SWITCHING REQUEST")
+    print(f"   From: {previous_mode} mode")
+    print(f"   To:   {new_mode} mode")
+    print("-" * 50)
+    
+    OFFLINE_ONLY = new_offline_mode
+    
+    if OFFLINE_ONLY:
+        print("✅ Successfully switched to OFFLINE mode")
+        print("🔒 Now using local AI models")
+        print("   └── All queries will be processed locally")
+        print("   └── No internet connection required")
+    else:
+        print("✅ Successfully switched to ONLINE mode")
+        print("🌐 Now using cloud AI services")
+        print("   └── Google Search integration enabled")
+        print("   └── Extended knowledge base available")
+    
+    print("=" * 50 + "\n")
+    
+    return jsonify({
+        "status": "ok", 
+        "offline_only": OFFLINE_ONLY,
+        "message": f"Successfully switched to {new_mode} mode"
+    })
 
 def search_online(query):
+    print("   🔍 Initiating online search...")
     google_api_key = os.getenv("GOOGLE_API_KEY")
     google_cx = os.getenv("GOOGLE_CX")
     gemini_api_key = os.getenv("GEMINI_API_KEY")
 
     if google_api_key and google_cx:
+        print("   └── Using Google Custom Search API")
         service = build("customsearch", "v1", developerKey=google_api_key)
         res = service.cse().list(q=query, cx=google_cx, num=5).execute()
         if 'items' in res:
@@ -202,13 +264,20 @@ Answer:"""
                 return f"Error generating answer from online results: {e}"
 
         else:
+            print("   └── ❌ No online search results found")
             return "No results found online."
     elif gemini_api_key:
+        print("   └── Using Gemini API (stub)")
         return f"Gemini search stub for query: '{query}'"
     else:
+        print("   └── ❌ No online search APIs configured")
         return "No online search configured."
 
 if __name__ == "__main__":
+    print("\n🌟 Starting Flask server...")
+    print("🔗 Server will be available at: http://localhost:6969")
+    print("🎯 Ready to process documents and queries!")
+    print("=" * 60 + "\n")
     app.run(debug=True, port=6969)
 
 # ================================

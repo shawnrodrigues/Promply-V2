@@ -129,6 +129,12 @@ export default function WelcomePage() {
 
   const handleToggleMode = async () => {
     const newOfflineMode = !isOfflineMode;
+    const previousMode = isOfflineMode ? 'OFFLINE' : 'ONLINE';
+    const newMode = newOfflineMode ? 'OFFLINE' : 'ONLINE';
+    
+    // Console indicator for mode switching
+    console.log(`🔄 Switching from ${previousMode} mode to ${newMode} mode...`);
+    
     setIsOfflineMode(newOfflineMode);
     
     try {
@@ -145,14 +151,27 @@ export default function WelcomePage() {
       const data = await response.json();
       
       if (data.error) {
-        console.warn('Toggle warning:', data.error);
+        console.warn('⚠️ Toggle warning:', data.error);
+        console.log(`❌ Failed to switch to ${newMode} mode - staying in ${previousMode} mode`);
       } else {
-        console.log('Mode toggled:', data);
+        console.log(`✅ Successfully switched to ${newMode} mode`);
+        console.log('📊 Mode toggle response:', data);
+        
+        // Additional mode-specific indicators
+        if (newOfflineMode) {
+          console.log('🔒 Now running in OFFLINE mode - Using local AI models');
+        } else {
+          console.log('🌐 Now running in ONLINE mode - Using cloud AI services');
+        }
       }
     } catch (error) {
-      console.error('Toggle failed:', error);
+      console.error('❌ Toggle failed:', error);
+      console.log(`🔄 Reverting back to ${previousMode} mode due to error`);
+      
       // Revert the toggle if backend call failed
       setIsOfflineMode(!newOfflineMode);
+      
+      console.log(`↩️ Successfully reverted to ${previousMode} mode`);
     }
   };
 
