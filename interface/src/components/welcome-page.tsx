@@ -1,12 +1,12 @@
-
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { GalleryVerticalEnd, UploadCloud, Loader2, User, Bot } from "lucide-react";
+import { GalleryVerticalEnd, UploadCloud, Loader2, User, Bot, Plus, Send, Paperclip } from "lucide-react";
 
 export default function WelcomePage() {
   const [step, setStep] = useState<"home" | "uploader" | "scanning" | "chat">("home");
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfFiles, setPdfFiles] = useState<File[]>([]); // Changed from single file to array
+  const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({});
   const [chat, setChat] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [input, setInput] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
@@ -18,23 +18,32 @@ export default function WelcomePage() {
   const handleStartDirectChat = () => setStep("chat");
   const handleGoHome = () => {
     setStep("home");
-    setPdfFile(null);
+    setPdfFiles([]); // Changed from setPdfFile(null)
+    setUploadProgress({});
     setChat([]);
     setInput("");
   };
 
-  // Step 2: Real PDF upload to backend
+  // Step 2: Real PDF upload to backend - modified for multiple files
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setPdfFile(file);
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      setPdfFiles(files);
       setStep("scanning");
       
-      // Real backend upload via Next.js API
-      const formData = new FormData();
-      formData.append('pdf', file);
-      
-      try {
+      // Upload files one by one to existing endpoint
+      await uploadMultipleFiles(files);
+    }
+  };
+
+  const uploadMultipleFiles = async (files: File[]) => {
+    try {
+      // Upload each file individually to the existing /api/upload endpoint
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const formData = new FormData();
+        formData.append('pdf', file);
+        
         const response = await fetch('/api/upload', {
           method: 'POST',
           body: formData
@@ -50,50 +59,32 @@ export default function WelcomePage() {
           throw new Error(data.error);
         }
         
-        console.log(data.message);
-        setStep("chat");
-      } catch (error) {
-        console.error('Upload failed:', error);
-        alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        setStep("uploader");
+        console.log(`File ${i + 1}/${files.length} uploaded:`, data.message);
       }
+      
+      console.log('All files uploaded successfully');
+      setStep("chat");
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStep("uploader");
     }
   };
 
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      setPdfFile(file);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files).filter(file => file.type === 'application/pdf');
+      
+      if (files.length === 0) {
+        alert('Please upload only PDF files');
+        return;
+      }
+      
+      setPdfFiles(files);
       setStep("scanning");
       
-      // Real backend upload via Next.js API
-      const formData = new FormData();
-      formData.append('pdf', file);
-      
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        
-        console.log(data.message);
-        setStep("chat");
-      } catch (error) {
-        console.error('Upload failed:', error);
-        alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        setStep("uploader");
-      }
+      await uploadMultipleFiles(files);
     }
   };
 
@@ -164,6 +155,9 @@ export default function WelcomePage() {
       setIsOfflineMode(!newOfflineMode);
     }
   };
+
+  // Navigation function to go back to uploader
+  const handleGoToUploader = () => setStep("uploader");
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 relative overflow-hidden">
@@ -311,7 +305,7 @@ export default function WelcomePage() {
               onDragOver={handleDragOver}
               onClick={() => fileInputRef.current?.click()}
             >
-              <div className="w-20 h-20 bg-blue-500/10 rounded-2xl flex items-center justify-center group-hover:bg-blue-500/20 transition-colors group-hover:scale-110 duration-300">
+              <div className="w-20 h-20 bg-blue-500/10 rounded-2xl flex items-center justify-center group_hover:bg-blue-500/20 transition-colors group-hover:scale-110 duration-300">
                 <UploadCloud className="w-10 h-10 text-blue-400 group-hover:animate-bounce" />
               </div>
               <div className="text-center space-y-4">
@@ -337,6 +331,7 @@ export default function WelcomePage() {
                 id="pdf"
                 type="file"
                 accept="application/pdf"
+                multiple // Added multiple attribute
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -344,7 +339,7 @@ export default function WelcomePage() {
           </div>
         )}
 
-        {/* Enhanced dark scanning animation */}
+        {/* Enhanced dark scanning animation - updated for multiple files */}
         {step === "scanning" && (
           <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-8 animate-fadein">
             <div className="relative">
@@ -354,8 +349,23 @@ export default function WelcomePage() {
               <div className="absolute inset-0 bg-blue-500/5 rounded-2xl animate-ping"></div>
             </div>
             <div className="text-center space-y-4">
-              <h2 className="text-3xl font-semibold text-slate-100">Processing document...</h2>
-              <p className="text-slate-300 text-lg">We&apos;re analyzing your PDF to enable intelligent conversations</p>
+              <h2 className="text-3xl font-semibold text-slate-100">Processing documents...</h2>
+              <p className="text-slate-300 text-lg">
+                We&apos;re analyzing your {pdfFiles.length} PDF{pdfFiles.length > 1 ? 's' : ''} to enable intelligent conversations
+              </p>
+              
+              {/* Show file list during upload */}
+              {pdfFiles.length > 1 && (
+                <div className="max-w-md mx-auto space-y-2 mt-6">
+                  {pdfFiles.map((file, index) => (
+                    <div key={index} className="flex items-center justify-between bg-slate-800/30 rounded-lg px-4 py-2 text-sm">
+                      <span className="text-slate-300 truncate flex-1">{file.name}</span>
+                      <span className="text-blue-400 ml-2">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
               <div className="flex items-center justify-center gap-3 mt-6">
                 <div className="w-3 h-3 bg-blue-400 rounded-full animate-bounce"></div>
                 <div className="w-3 h-3 bg-violet-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
@@ -371,20 +381,23 @@ export default function WelcomePage() {
             {/* Futuristic glow effect */}
             <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-transparent to-blue-500/5 pointer-events-none"></div>
             
-            {/* Futuristic chat header */}
+            {/* Futuristic chat header - Remove plus button */}
             <div className="relative p-5 border-b border-cyan-500/20 bg-slate-900/60 backdrop-blur-lg">
               <div className="flex items-center gap-4">
                 <div className="relative w-10 h-10 bg-gradient-to-br from-cyan-500/30 to-blue-600/30 rounded-xl flex items-center justify-center shadow-lg border border-cyan-400/30">
                   <div className="absolute inset-0 bg-cyan-400/10 rounded-xl animate-pulse"></div>
-                  {pdfFile ? <UploadCloud className="w-5 h-5 text-cyan-300 relative z-10" /> : <Bot className="w-5 h-5 text-cyan-300 relative z-10" />}
+                  {pdfFiles.length > 0 ? <UploadCloud className="w-5 h-5 text-cyan-300 relative z-10" /> : <Bot className="w-5 h-5 text-cyan-300 relative z-10" />}
                 </div>
                 <div className="flex-1">
                   <h2 className="text-lg font-semibold text-cyan-100">
-                    {pdfFile ? "Document Analysis" : "AI Assistant"}
+                    {pdfFiles.length > 0 ? "Document Analysis" : "AI Assistant"}
                   </h2>
                   <div className="flex items-center gap-3 mt-1">
                     <p className="text-slate-400 text-sm">
-                      {pdfFile ? "Neural document processing active" : "Advanced AI conversation mode"}
+                      {pdfFiles.length > 0 
+                        ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed - Neural analysis active`
+                        : "Advanced AI conversation mode"
+                      }
                     </p>
                     <div className="flex items-center gap-1.5 text-xs">
                       <div className={`w-2 h-2 rounded-full animate-pulse ${!isOfflineMode ? 'bg-cyan-400' : 'bg-slate-400'}`}></div>
@@ -405,10 +418,13 @@ export default function WelcomePage() {
                     <Bot className="w-8 h-8 text-cyan-400 relative z-10" />
                   </div>
                   <h3 className="text-2xl font-semibold text-cyan-100 mb-3">
-                    {pdfFile ? "Neural Analysis Ready" : "AI System Online"}
+                    {pdfFiles.length > 0 ? "Neural Analysis Ready" : "AI System Online"}
                   </h3>
                   <p className="text-slate-300 mb-8">
-                    {pdfFile ? "Document processed and ready for queries." : "Start a conversation with the AI assistant."}
+                    {pdfFiles.length > 0 
+                      ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed and ready for queries.`
+                      : "Start a conversation with the AI assistant."
+                    }
                   </p>
                 </div>
               )}
@@ -467,24 +483,40 @@ export default function WelcomePage() {
             </div>
             
             <div className="relative p-5 border-t border-cyan-500/20 bg-slate-900/60 backdrop-blur-lg">
-              <form onSubmit={handleSend} className="flex gap-3">
+              <form onSubmit={handleSend} className="flex items-center gap-3">
                 <div className="relative flex-1">
                   <Input
                     type="text"
                     value={input}
                     onChange={e => setInput(e.target.value)}
-                    placeholder={pdfFile ? "Query document..." : "Enter command..."}
-                    className="w-full bg-slate-900/60 border-cyan-500/30 text-cyan-100 placeholder:text-slate-500 focus:border-cyan-400/50 focus:ring-cyan-400/20 rounded-xl px-4 py-3 backdrop-blur-sm"
+                    placeholder={pdfFiles.length > 0 ? "Query documents..." : "Enter command..."}
+                    className="w-full h-12 bg-slate-900/70 border-cyan-500/30 text-cyan-100 placeholder:text-slate-400 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20 rounded-xl px-4 py-3 pr-4 text-base backdrop-blur-sm transition-all duration-200 shadow-inner"
                   />
-                  <div className="absolute inset-0 bg-cyan-400/5 rounded-xl pointer-events-none"></div>
+                  <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/5 via-transparent to-blue-400/5 rounded-xl pointer-events-none"></div>
                 </div>
+                
+                {/* Improved Upload Button */}
+                <Button 
+                  type="button"
+                  onClick={handleGoToUploader}
+                  className="relative w-12 h-12 bg-slate-800/60 hover:bg-slate-700/70 border border-slate-600/40 hover:border-slate-500/50 rounded-xl p-0 transition-all duration-200 group flex-shrink-0 shadow-lg"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-br from-slate-600/10 to-slate-700/20 rounded-xl"></div>
+                  <div className="absolute inset-0 bg-slate-400/5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
+                  <Paperclip className="w-5 h-5 text-slate-300 group-hover:text-slate-200 relative z-10 group-hover:scale-110 group-hover:rotate-12 transition-all duration-200" />
+                </Button>
+                
+                {/* Improved Send Button */}
                 <Button 
                   type="submit" 
                   disabled={!input.trim()}
-                  className="relative bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg shadow-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 border border-cyan-400/30"
+                  className="relative h-12 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 disabled:from-slate-700 disabled:to-slate-800 text-white px-8 py-3 rounded-xl font-semibold shadow-lg shadow-cyan-500/25 disabled:shadow-none disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 border border-cyan-400/40 disabled:border-slate-600/30 flex-shrink-0"
                 >
-                  <div className="absolute inset-0 bg-cyan-400/10 rounded-xl"></div>
-                  <span className="relative z-10">SEND</span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/15 to-blue-400/15 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
+                  <span className="relative z-10 flex items-center gap-2">
+                    <Send className="w-4 h-4" />
+                    SEND
+                  </span>
                 </Button>
               </form>
             </div>
