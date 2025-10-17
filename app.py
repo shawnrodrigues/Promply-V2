@@ -105,6 +105,7 @@ def upload():
     file = request.files["pdf"]
     if file:
         mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
+        current_mode = "offline" if OFFLINE_ONLY else "online"
         print(f"\n📄 [{mode_indicator}] Processing upload: {file.filename}")
         
         path = os.path.join(UPLOAD_FOLDER, file.filename)
@@ -130,8 +131,8 @@ def upload():
         print(f"✅ [{mode_indicator}] Upload and processing complete for: {file.filename}")
         return jsonify({
             "status": "success", 
-            "message": f"✅ PDF uploaded & processed in {new_mode} mode",
-            "mode": "offline" if OFFLINE_ONLY else "online"
+            "message": f"✅ PDF uploaded & processed in {current_mode} mode",
+            "mode": current_mode
         })
     return jsonify({"status": "error", "message": "No file uploaded"})
 
