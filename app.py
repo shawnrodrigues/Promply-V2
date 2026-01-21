@@ -41,13 +41,13 @@ OFFLINE_ONLY = True  # default state of online/offline toggle
 
 # Console logging for initial mode
 print("=" * 60)
-print("🚀 PROMPTLY AI DOCUMENT ASSISTANT STARTING...")
+print("🚀 PROMPTLY STARTING...")
 print("=" * 60)
 print(f"📡 Initial Mode: {'🔒 OFFLINE MODE' if OFFLINE_ONLY else '🌐 ONLINE MODE'}")
 if OFFLINE_ONLY:
-    print("   └── Using local AI models only")
+    print("   └── Using local models only")
 else:
-    print("   └── Using cloud AI services")
+    print("   └── Using cloud services")
 print("=" * 60)
 
 def embed_text(text):
@@ -215,12 +215,12 @@ def toggle():
     
     if OFFLINE_ONLY:
         print("✅ Successfully switched to OFFLINE mode")
-        print("🔒 Now using local AI models")
+        print("🔒 Now using local models")
         print("   └── All queries will be processed locally")
         print("   └── No internet connection required")
     else:
         print("✅ Successfully switched to ONLINE mode")
-        print("🌐 Now using cloud AI services")
+        print("🌐 Now using cloud services")
         print("   └── Google Search integration enabled")
         print("   └── Extended knowledge base available")
     

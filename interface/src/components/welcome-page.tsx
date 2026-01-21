@@ -223,8 +223,6 @@ export default function WelcomePage() {
                 Online
               </span>
             </div>
-            
-            <div className="text-sm text-slate-400 font-medium">AI Document Assistant</div>
           </div>
         </div>
       </header>
@@ -274,7 +272,7 @@ export default function WelcomePage() {
                       <Bot className="w-5 h-5 text-violet-400" />
                     </div>
                     <h3 className="text-base font-semibold text-slate-100">Direct Chat</h3>
-                    <p className="text-xs text-slate-500 leading-relaxed">Instant AI conversation</p>
+                    <p className="text-xs text-slate-500 leading-relaxed">Instant chat with Promptly </p>
                   </div>
                 </div>
               </div>
@@ -409,13 +407,13 @@ export default function WelcomePage() {
                 </div>
                 <div className="flex-1">
                   <h2 className="text-lg font-semibold text-cyan-100">
-                    {pdfFiles.length > 0 ? "Document Analysis" : "AI Assistant"}
+                    {pdfFiles.length > 0 ? "Document Analysis" : "Promptly"}
                   </h2>
                   <div className="flex items-center gap-3 mt-1">
                     <p className="text-slate-400 text-sm">
                       {pdfFiles.length > 0 
                         ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed - Neural analysis active`
-                        : "Advanced AI conversation mode"
+                        : "Promptly conversation mode"
                       }
                     </p>
                     <div className="flex items-center gap-1.5 text-xs">
@@ -442,7 +440,7 @@ export default function WelcomePage() {
                   <p className="text-slate-300 mb-8">
                     {pdfFiles.length > 0 
                       ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed and ready for queries.`
-                      : "Start a conversation with the AI assistant."
+                      : "Start a conversation with Promptly."
                     }
                   </p>
                 </div>
@@ -546,7 +544,7 @@ export default function WelcomePage() {
       {/* Minimal footer */}
       <footer className="relative z-10 w-full max-w-7xl mx-auto px-6 py-6 mt-auto border-t border-slate-800/30">
         <div className="text-center">
-          <p className="text-xs text-slate-500">© 2025 Promptly • AI Document Assistant</p>
+          <p className="text-xs text-slate-500">Promptly made by Hardwork</p>
         </div>
       </footer>
 
