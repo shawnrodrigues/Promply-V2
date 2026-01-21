@@ -1,142 +1,141 @@
-# 🚀 Promply-V2 – Installation Guide  
+# 🚀 Promply-V2 — Installation & Setup Guide
 
-This guide will help you set up **Promply-V2** on your local machine with GPU (CUDA) support, Python virtual environment, and required dependencies.  
-
----
-
-## 📦 Prerequisites  
-
-Before installation, make sure you have:  
-
-- ✅ [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) installed  
-- ✅ [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) installed  
-- ✅ [Python 3.11](https://www.python.org/downloads/release/python-3110/) installed  
-- ✅ [Google Drive](https://drive.google.com/drive/folders/1ICX0rQ5p6aZtJb6kw5YfYMc2m7atXvdo?usp=sharing) Models
-- ✅ [Google Drive 2](https://drive.google.com/drive/folders/1pvCsdTdeqOpFGVWut3DPHhPdMHY3fF-P?usp=sharing) Models 2
+Promply-V2 is an AI-powered document search and OCR application, supporting NVIDIA GPU acceleration, vector search, and the latest LLM APIs.
 
 ---
 
-## ⚙️ Setup Instructions  
+## ✅ Prerequisites
 
-### 1️⃣ Create Virtual Environment  
+Before installing, ensure the following are installed on your system:
+
+| Requirement | Purpose |
+|------------|---------|
+| **Python 3.11** | Required runtime |
+| **NVIDIA GPU + CUDA Toolkit (12.X recommended)** | GPU acceleration |
+| **Visual Studio Build Tools** | For building Python dependencies |
+| **Tesseract OCR** | Extract text from PDFs/images |
+
+Optional model downloads:  
+📁 [Models (Google Drive Link 1)](https://drive.google.com/drive/folders/1ICX0rQ5p6aZtJb6kw5YfYMc2m7atXvdo?usp=sharing)  
+📁 [Models (Google Drive Link 2)](https://drive.google.com/drive/folders/1pvCsdTdeqOpFGVWut3DPHhPdMHY3fF-P?usp=sharing)
+
+---
+
+## ⚙️ Installation Steps
+
+### 1️⃣ Clone the Repository
+
+```bash
+git clone https://github.com/shawnrodrigues/Promply-V2.git
+cd Promply-V2
 ```
+
+### 2️⃣ Create & Activate Virtual Environment
+
+```bash
 py -3.11 -m venv myenv
 myenv\Scripts\activate
 ```
 
-### 2️⃣ Install PyTorch with CUDA Support
-```
-pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+### 3️⃣ Install PyTorch with CUDA Support
 
+```bash
+pip install --upgrade pip setuptools wheel
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-### 3️⃣ Install llama.cpp Python Binding
+If GPU installation fails, install CPU-only:
 
-```
-pip install --force-reinstall .\llama_cpp_python-0.2.26+cu122-cp311-cp311-win_amd64.whl
+```bash
+pip install torch torchvision torchaudio
 ```
 
 ### 4️⃣ Install Project Dependencies
 
-```
+```bash
 pip install -r requirements.txt
-```
-
-If you need to reset your environment:
-
-```
-deactivate
-Remove-Item -Path "P:\Promply-V2\myenv" -Recurse -Force
-pip install -r requirements.txt
-```
-
-### 5️⃣ Create Required Folders
-```
-mkdir uploads
-mkdir models
 ```
 
 ---
 
+## 📂 Folder Creation (Required)
 
-## 🖼️ OCR Setup (Tesseract)
-### 1️⃣ Install Tesseract
+Create folders if they don’t exist:
 
-Download & install from UB Mannheim Tesseract [Download](https://github.com/UB-Mannheim/tesseract/wiki).
-
-### 2️⃣ Add Tesseract to PATH
-Add this line at the end:
-
+```bash
+mkdir uploads models vector_store
+mkdir uploads\images
 ```
+
+---
+
+## 🖼️ Tesseract OCR Setup
+
+### Install Tesseract
+Download from:  
+🔗 https://github.com/UB-Mannheim/tesseract/wiki
+
+### Add to PATH (Windows PowerShell)
+
+```bash
 setx PATH "%PATH%;C:\Program Files\Tesseract-OCR"
 ```
 
-### 3️⃣ Reactivate Environment
-```
-deactivate
-.\myenv\Scripts\activate
-```
-### 4️⃣ Verify Installation
+### Verify Installation
 
-```
+```bash
 tesseract --version
 ```
 
 ---
 
-
 ## 🔑 Environment Variables
-Create a .env file in the project root:
 
-```
-# Google Custom Search
+Create a file named `.env` in the project root:
+
+```ini
+# Google Search
 GOOGLE_API_KEY=
 GOOGLE_CX=
 
-# Gemini
+# Gemini API
 GEMINI_API_KEY=
 
-# OpenAI 
+# OpenAI
 OPENAI_API_KEY=
 ```
 
-## ▶️ Run the Project
+---
 
-After setup, start the application with:
+## ▶️ Run Promply-V2
 
-```
+```bash
 python app.py
-
 ```
 
-## Images
+Then open:
 
-Contents of the code
+```
+http://localhost:5000
+```
 
+---
+
+## 📸 UI Preview
+
+### Project Structure
 ```
 PROMPLY-V2
 ├── data/
 ├── Images/
 ├── interface/
 ├── models/
-├── myenv/
-├── Test Interface/
-│   └── index.html
 ├── uploads/
 │   └── images/
 ├── vector_store/
-├── .env.example
-├── .gitignore
 ├── app.py
-├── env
-├── package-lock.json
-├── README OLD.md
-├── README.md
-├── requirements-backup.txt
 ├── requirements.txt
-├── tesseract-installer.exe
-└── TODO.md
-
+└── README.md
 ```
 
 ![Contents](Images/Contents.png)
@@ -155,5 +154,19 @@ Progress Bar/UI
 
 ---
 
-## ✅ Done!
-You are now ready to run Promply-V2 🎉
+## 🔁 Environment Reset (If Required)
+
+```bash
+deactivate
+Remove-Item -Recurse -Force myenv
+py -3.11 -m venv myenv
+myenv\Scripts\activate
+pip install -r requirements.txt
+```
+
+---
+
+## ✅ You’re Ready!
+
+You now have Promply-V2 successfully running! 🚀  
+Have fun exploring the power of AI search & OCR! 😄
