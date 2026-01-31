@@ -12,7 +12,9 @@ import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
 import io
-from googleapiclient.discovery import build
+import google.generativeai as genai
+from openai import OpenAI
+from duckduckgo_search import DDGS
 
 load_dotenv()
 
@@ -29,25 +31,21 @@ os.makedirs(VECTORDB_FOLDER, exist_ok=True)
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# ✅ Always use GPU for embedding
+# Always use GPU for embedding
 if not torch.cuda.is_available():
-    raise RuntimeError("❌ CUDA not available — GPU required for this app.")
+    raise RuntimeError("CUDA not available - GPU required for this app.")
 
 device = "cuda"
-print(f"✅ SentenceTransformer running on: {device}")
+print(f"SentenceTransformer running on: {device}")
 embed_model = SentenceTransformer("all-mpnet-base-v2", device=device)
 
-OFFLINE_ONLY = True  # default state of online/offline toggle
+OFFLINE_ONLY = True
+SEARCH_ENGINE = "duckduckgo"
 
-# Console logging for initial mode
 print("=" * 60)
-print("🚀 PROMPTLY STARTING...")
+print("PROMPTLY STARTING...")
 print("=" * 60)
-print(f"📡 Initial Mode: {'🔒 OFFLINE MODE' if OFFLINE_ONLY else '🌐 ONLINE MODE'}")
-if OFFLINE_ONLY:
-    print("   └── Using local models only")
-else:
-    print("   └── Using cloud services")
+print(f"Initial Mode: {'OFFLINE MODE' if OFFLINE_ONLY else 'ONLINE MODE'}")
 print("=" * 60)
 
 def embed_text(text):
@@ -62,7 +60,7 @@ def extract_images_and_ocr(pdf_path):
     for page_number in range(len(doc)):
         page = doc.load_page(page_number)
         images = page.get_images(full=True)
-        for img_index, img in enumerate(images):
+        for img in images:
             xref = img[0]
             base_image = doc.extract_image(xref)
             image_bytes = base_image["image"]
@@ -87,13 +85,11 @@ def get_or_recreate_collection(client, name, expected_dim):
 expected_dim = embed_model.get_sentence_embedding_dimension()
 collection = get_or_recreate_collection(chroma_client, "manuals", expected_dim)
 
-llm_ctx = 4096
-llm_gpu_layers = -1  # fully use GPU
-print("✅ Initializing LLaMA … with GPU only.")
+print("Initializing LLaMA with GPU...")
 llm = Llama(
     model_path=MODEL_PATH,
-    n_gpu_layers=llm_gpu_layers,
-    n_ctx=llm_ctx
+    n_gpu_layers=-1,
+    n_ctx=4096
 )
 
 @app.route("/", methods=["GET"])
@@ -102,85 +98,239 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    file = request.files["pdf"]
-    if file:
-        mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
-        current_mode = "offline" if OFFLINE_ONLY else "online"
-        print(f"\n📄 [{mode_indicator}] Processing upload: {file.filename}")
-        
-        path = os.path.join(UPLOAD_FOLDER, file.filename)
-        file.save(path)
+    file = request.files.get("pdf")
+    if not file:
+        return jsonify({"status": "error", "message": "No file uploaded"})
+    
+    print(f"Processing upload: {file.filename}")
+    path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(path)
 
-        text = parse_pdf_text(path)
-        image_text = extract_images_and_ocr(path)
-        combined_text = text + "\n" + image_text
+    text = parse_pdf_text(path)
+    image_text = extract_images_and_ocr(path)
+    combined_text = text + "\n" + image_text
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100
+    )
+    chunks = text_splitter.split_text(combined_text)
+
+    print(f"PDF split into {len(chunks)} chunks. Adding to vector DB...")
+    for idx, chunk in tqdm(enumerate(chunks), total=len(chunks), desc="Processing chunks"):
+        collection.add(
+            documents=[chunk],
+            embeddings=[embed_text(chunk)],
+            ids=[f"{file.filename}_{idx}"]
         )
-        chunks = text_splitter.split_text(combined_text)
+    
+    print(f"Upload complete: {file.filename}")
+    return jsonify({
+        "status": "success",
+        "message": "PDF uploaded and processed",
+        "mode": "offline" if OFFLINE_ONLY else "online"
+    })
 
-        print(f"📄 PDF split into {len(chunks)} chunks. Adding to vector DB …")
-        for idx, chunk in tqdm(enumerate(chunks), total=len(chunks), desc="🔷 Processing chunks"):
-            collection.add(
-                documents=[chunk],
-                embeddings=[embed_text(chunk)],
-                ids=[f"{file.filename}_{idx}"]
+def format_response(raw_response):
+    """Enhanced formatting for better readability"""
+    response = raw_response.strip()
+    
+    # Remove excessive whitespace while preserving intentional line breaks
+    lines = response.split('\n')
+    formatted = []
+    
+    for line in lines:
+        line = line.strip()
+        if line:
+            formatted.append(line)
+        elif formatted and formatted[-1] != '':  # Preserve paragraph breaks
+            formatted.append('')
+    
+    # Remove trailing empty lines
+    while formatted and formatted[-1] == '':
+        formatted.pop()
+    
+    return '\n'.join(formatted)
+
+def generate_answer(context, question):
+    prompt = f"""You are a helpful AI assistant. Answer the question based on the following manual content.
+
+IMPORTANT: Structure your response clearly using:
+• Use bullet points (•) for listing features, items, or key points
+• Use numbered lists (1., 2., 3.) for sequential steps or procedures  
+• Write clear paragraphs separated by blank lines
+• Start with a direct answer to the question
+• Include relevant details and examples from the context
+• End with any important notes or warnings if applicable
+
+Manual Content:
+{context}
+
+Question: {question}
+
+Answer (provide a well-structured, detailed response):"""
+
+    try:
+        output = llm(prompt, max_tokens=1000, temperature=0.7, stop=["Question:", "Manual Content:"])
+        return format_response(output['choices'][0]['text'])
+    except Exception as e:
+        return f"Error generating answer: {e}"
+
+def search_online(query):
+    print(f"Searching online using {SEARCH_ENGINE.upper()}")
+
+    if SEARCH_ENGINE == "duckduckgo":
+        try:
+            print("Using DuckDuckGo Search (free)")
+            ddgs = DDGS()
+            results = list(ddgs.text(query, max_results=5))
+
+            if not results:
+                return "No search results found."
+
+            formatted = []
+            for i, r in enumerate(results, 1):
+                formatted.append(
+                    f"Source {i}: {r.get('title', 'No title')}\n{r.get('body', '')}\nURL: {r.get('href', '')}"
+                )
+
+            context = "\n\n---\n\n".join(formatted)
+
+            prompt = f"""You are a helpful AI assistant. Use the following online search results to answer the question.
+
+IMPORTANT: Structure your response clearly using:
+• Use bullet points (•) for listing features, items, or key points
+• Use numbered lists (1., 2., 3.) for sequential steps or procedures
+• Write clear paragraphs separated by blank lines
+• Start with a direct, comprehensive answer
+• Include relevant details from the search results
+• Cite sources when mentioning specific information (e.g., "According to Source 1...")
+• End with a summary or conclusion if appropriate
+
+Search Results:
+{context}
+
+Question: {query}
+
+Answer (provide a well-structured, detailed response):"""
+
+            try:
+                output = llm(prompt, max_tokens=1000, temperature=0.7, stop=["Question:", "Search Results:"])
+                answer = format_response(output['choices'][0]['text'])
+                
+                sources = "\n\n" + "=" * 50 + "\n\nSources:\n"
+                for i, r in enumerate(results, 1):
+                    sources += f"  {i}. {r.get('title', 'No title')}\n     {r.get('href', '')}\n"
+                
+                print("DuckDuckGo search completed")
+                return answer + sources
+            except Exception as e:
+                print(f"Error generating answer: {e}")
+                return f"Error processing search results: {e}"
+                
+        except Exception as e:
+            print(f"DuckDuckGo search failed: {e}")
+            return f"DuckDuckGo search failed: {e}"
+
+    elif SEARCH_ENGINE == "gemini":
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_api_key:
+            return "Gemini API key not found in .env file."
+        
+        try:
+            genai.configure(api_key=gemini_api_key)
+            model = genai.GenerativeModel('gemini-pro')
+            
+            enhanced_query = f"""Answer the following question in a well-structured format:
+
+• Use bullet points for lists
+• Use numbered steps for procedures
+• Write clear paragraphs
+• Include examples when relevant
+
+Question: {query}"""
+            
+            response = model.generate_content(enhanced_query)
+            return format_response(response.text)
+        except Exception as e:
+            return f"Gemini API error: {e}"
+
+    elif SEARCH_ENGINE == "openai":
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            return "OpenAI API key not found in .env file."
+        
+        try:
+            client = OpenAI(api_key=openai_api_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Always structure your responses with bullet points, numbered lists, and clear paragraphs for better readability."},
+                    {"role": "user", "content": query}
+                ],
+                max_tokens=1000,
+                temperature=0.7
             )
-        print(f"✅ [{mode_indicator}] Upload and processing complete for: {file.filename}")
-        return jsonify({
-            "status": "success", 
-            "message": f"✅ PDF uploaded & processed in {current_mode} mode",
-            "mode": current_mode
-        })
-    return jsonify({"status": "error", "message": "No file uploaded"})
+            return format_response(response.choices[0].message.content)
+        except Exception as e:
+            return f"OpenAI API error: {e}"
+
+    return "Search engine not configured."
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    query = request.json["query"]
+    query = request.json.get("query", "")
+    if not query:
+        return jsonify({"response": "No query provided."})
     
-    # Log the query with mode indicator
-    mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
-    print(f"\n💬 [{mode_indicator}] Processing query: '{query[:50]}{'...' if len(query) > 50 else ''}'")
+    print(f"Processing query: '{query[:50]}...'")
 
+    # Check if we have documents
+    try:
+        all_docs = collection.get(limit=1)
+        has_documents = len(all_docs.get('ids', [])) > 0
+    except:
+        has_documents = False
+
+    # If no documents and offline mode
+    if not has_documents:
+        if OFFLINE_ONLY:
+            return jsonify({"response": "No documents uploaded. Please upload documents to get started."})
+        else:
+            response = search_online(query)
+            return jsonify({"response": response})
+
+    # Query the vector database
     results = collection.query(
         query_embeddings=[embed_text(query)],
         n_results=5
     )
-    context = "\n".join(results['documents'][0])
 
-    if not context and not OFFLINE_ONLY:
-        print("   └── No local context found, searching online...")
-        response = search_online(query)
-        print("   └── ✅ Online search completed")
-        return jsonify({"response": response})
-    elif not context:
-        print("   └── ❌ No relevant information found in local documents")
-        return jsonify({"response": "No relevant information found in uploaded manuals."})
+    context = "\n".join(results.get("documents", [[]])[0]) if results.get("documents") else ""
+
+    # Check relevance
+    distances = results.get('distances', [[]])[0] if results.get('distances') else []
+    is_relevant = False
     
-    print("   └── ✅ Using local document context")
-    response_text = generate_answer(context, query)
-    return jsonify({"response": response_text})
+    if distances and len(distances) > 0:
+        best_distance = min(distances)
+        is_relevant = best_distance < 0.8
+        print(f"Best match distance: {best_distance:.3f} ({'relevant' if is_relevant else 'not relevant'})")
 
-def generate_answer(context, question):
-    prompt = f"""
-You are a helpful assistant. Answer the question based on the following manual content.
+    # If not relevant and online mode, search online
+    if (not context or not is_relevant) and not OFFLINE_ONLY:
+        print("No relevant local context, searching online...")
+        response = search_online(query)
+        return jsonify({"response": response})
+    
+    # If not relevant and offline mode
+    if not context or not is_relevant:
+        return jsonify({"response": "No relevant information found in uploaded documents."})
 
-Manual Content:
-\"\"\"
-{context}
-\"\"\"
-
-Question: {question}
-Answer:"""
-
-    try:
-        output = llm(prompt, max_tokens=300, stop=["\n"])
-        answer = output['choices'][0]['text'].strip()
-        return answer
-    except Exception as e:
-        return f"Error generating answer: {e}"
+    # Generate answer from local documents
+    print("Using local document context")
+    response = generate_answer(context, query)
+    return jsonify({"response": response})
 
 @app.route("/status", methods=["GET"])
 def status():
@@ -189,98 +339,53 @@ def status():
     except:
         count = "unknown"
     
-    mode_indicator = "🔒 OFFLINE" if OFFLINE_ONLY else "🌐 ONLINE"
-    print(f"\n📊 [{mode_indicator}] Status check - Documents: {count}")
-    
     return jsonify({
         "offline_only": OFFLINE_ONLY,
         "collection_documents": count,
-        "mode": "offline" if OFFLINE_ONLY else "online"
+        "mode": "offline" if OFFLINE_ONLY else "online",
+        "search_engine": SEARCH_ENGINE
+    })
+
+@app.route("/set-search-engine", methods=["POST"])
+def set_search_engine():
+    global SEARCH_ENGINE
+    engine = request.json.get("engine", "duckduckgo").lower()
+    
+    valid_engines = ["duckduckgo", "gemini", "openai"]
+    if engine not in valid_engines:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid engine. Choose from: {', '.join(valid_engines)}"
+        }), 400
+    
+    SEARCH_ENGINE = engine
+    print(f"Search engine changed to: {engine}")
+    
+    return jsonify({
+        "status": "ok",
+        "search_engine": SEARCH_ENGINE,
+        "message": f"Search engine changed to {engine}"
     })
 
 @app.route("/toggle", methods=["POST"])
 def toggle():
     global OFFLINE_ONLY
-    new_offline_mode = request.json["offline"]
-    previous_mode = "OFFLINE" if OFFLINE_ONLY else "ONLINE"
-    new_mode = "OFFLINE" if new_offline_mode else "ONLINE"
+    OFFLINE_ONLY = request.json.get("offline", True)
     
-    print("\n" + "=" * 50)
-    print(f"🔄 MODE SWITCHING REQUEST")
-    print(f"   From: {previous_mode} mode")
-    print(f"   To:   {new_mode} mode")
-    print("-" * 50)
-    
-    OFFLINE_ONLY = new_offline_mode
-    
-    if OFFLINE_ONLY:
-        print("✅ Successfully switched to OFFLINE mode")
-        print("🔒 Now using local models")
-        print("   └── All queries will be processed locally")
-        print("   └── No internet connection required")
-    else:
-        print("✅ Successfully switched to ONLINE mode")
-        print("🌐 Now using cloud services")
-        print("   └── Google Search integration enabled")
-        print("   └── Extended knowledge base available")
-    
-    print("=" * 50 + "\n")
+    mode = "OFFLINE" if OFFLINE_ONLY else "ONLINE"
+    print(f"Switched to {mode} mode")
     
     return jsonify({
-        "status": "ok", 
+        "status": "ok",
         "offline_only": OFFLINE_ONLY,
-        "message": f"Successfully switched to {new_mode} mode"
+        "message": f"Successfully switched to {mode} mode"
     })
 
-def search_online(query):
-    print("   🔍 Initiating online search...")
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-    google_cx = os.getenv("GOOGLE_CX")
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-
-    if google_api_key and google_cx:
-        print("   └── Using Google Custom Search API")
-        service = build("customsearch", "v1", developerKey=google_api_key)
-        res = service.cse().list(q=query, cx=google_cx, num=5).execute()
-        if 'items' in res:
-            snippets = [item['snippet'] for item in res['items']]
-            context = "\n\n".join(snippets)
-
-            prompt = f"""
-You are a helpful assistant. Use the following online search results to answer the question.
-
-Search Results:
-\"\"\"
-{context}
-\"\"\"
-
-Question: {query}
-Answer:"""
-
-            try:
-                output = llm(prompt, max_tokens=300, stop=["\n"])
-                answer = output['choices'][0]['text'].strip()
-                return answer
-            except Exception as e:
-                return f"Error generating answer from online results: {e}"
-
-        else:
-            print("   └── ❌ No online search results found")
-            return "No results found online."
-    elif gemini_api_key:
-        print("   └── Using Gemini API (stub)")
-        return f"Gemini search stub for query: '{query}'"
-    else:
-        print("   └── ❌ No online search APIs configured")
-        return "No online search configured."
-
 if __name__ == "__main__":
-    print("\n🌟 Starting Flask server...")
-    print("🔗 Server will be available at: http://localhost:6969")
-    print("🎯 Ready to process documents and queries!")
+    print("\nStarting Flask server...")
+    print("Server will be available at: http://localhost:6969")
+    print("Ready to process documents and queries!")
     print("=" * 60 + "\n")
     app.run(debug=True, port=6969)
 
-# ================================
-# === Made with ❤️ by CoCo ===
-# ================================
+# Made with love by CoCo

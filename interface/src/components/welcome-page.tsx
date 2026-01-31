@@ -178,6 +178,129 @@ export default function WelcomePage() {
   // Navigation function to go back to uploader
   const handleGoToUploader = () => setStep("uploader");
 
+  // Enhanced function to format message text with better styling
+  const formatMessage = (text: string) => {
+    const lines = text.split('\n');
+    const elements: JSX.Element[] = [];
+    let currentList: { type: 'bullet' | 'number'; items: string[]; startNum?: number } | null = null;
+    let currentParagraph: string[] = [];
+    let key = 0;
+
+    const flushParagraph = () => {
+      if (currentParagraph.length > 0) {
+        const paragraphText = currentParagraph.join(' ');
+        elements.push(
+          <p key={key++} className="mb-4 last:mb-0 leading-relaxed text-[15px]">
+            {paragraphText}
+          </p>
+        );
+        currentParagraph = [];
+      }
+    };
+
+    const flushList = () => {
+      if (currentList) {
+        if (currentList.type === 'bullet') {
+          elements.push(
+            <ul key={key++} className="my-4 space-y-2.5 pl-1">
+              {currentList.items.map((item, idx) => (
+                <li key={idx} className="flex items-start gap-3 text-[15px]">
+                  <span className="text-cyan-400 mt-0.5 font-bold flex-shrink-0">•</span>
+                  <span className="leading-relaxed">{item}</span>
+                </li>
+              ))}
+            </ul>
+          );
+        } else {
+          const startNum = currentList.startNum || 1;
+          elements.push(
+            <ol key={key++} className="my-4 space-y-2.5 pl-1">
+              {currentList.items.map((item, idx) => (
+                <li key={idx} className="flex items-start gap-3 text-[15px]">
+                  <span className="text-cyan-400 font-semibold flex-shrink-0 min-w-[28px]">
+                    {startNum + idx}.
+                  </span>
+                  <span className="leading-relaxed">{item}</span>
+                </li>
+              ))}
+            </ol>
+          );
+        }
+        currentList = null;
+      }
+    };
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+
+      // Empty line - flush current content
+      if (!trimmed) {
+        flushList();
+        flushParagraph();
+        return;
+      }
+
+      // Separator line (like --- or ────)
+      if (trimmed.match(/^[-─=]{3,}$/)) {
+        flushList();
+        flushParagraph();
+        elements.push(
+          <div key={key++} className="my-4 border-t border-slate-600/40"></div>
+        );
+        return;
+      }
+
+      // Bullet point (•, -, *)
+      if (trimmed.match(/^[•\-*]\s+/)) {
+        flushParagraph();
+        const content = trimmed.replace(/^[•\-*]\s+/, '');
+        if (!currentList || currentList.type !== 'bullet') {
+          flushList();
+          currentList = { type: 'bullet', items: [] };
+        }
+        currentList.items.push(content);
+        return;
+      }
+
+      // Numbered list - extract the actual number
+      const numberedMatch = trimmed.match(/^(\d+)[.)]\s+(.+)/);
+      if (numberedMatch) {
+        flushParagraph();
+        const num = parseInt(numberedMatch[1]);
+        const content = numberedMatch[2];
+        
+        if (!currentList || currentList.type !== 'number') {
+          flushList();
+          currentList = { type: 'number', items: [], startNum: num };
+        }
+        currentList.items.push(content);
+        return;
+      }
+
+      // Section headers or emphasized text (ALL CAPS or ending with :)
+      if (trimmed.length < 60 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
+        flushList();
+        flushParagraph();
+        elements.push(
+          <h4 key={key++} className="font-semibold text-cyan-300 mt-5 mb-2 text-[15px]">
+            {trimmed}
+          </h4>
+        );
+        return;
+      }
+
+      // Regular text - add to paragraph
+      flushList();
+      currentParagraph.push(trimmed);
+    });
+
+    // Flush any remaining content
+    flushList();
+    flushParagraph();
+
+    return <div className="space-y-1">{elements}</div>;
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 relative overflow-hidden">
       {/* Enhanced dark theme background */}
@@ -412,7 +535,7 @@ export default function WelcomePage() {
                   <div className="flex items-center gap-3 mt-1">
                     <p className="text-slate-400 text-sm">
                       {pdfFiles.length > 0 
-                        ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed - Neural analysis active`
+                        ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed`
                         : "Promptly conversation mode"
                       }
                     </p>
@@ -449,10 +572,10 @@ export default function WelcomePage() {
               {chat.map((msg, i) => (
                 msg.role === "user" ? (
                   <div key={i} className="flex justify-end fade-in">
-                    <div className="flex items-end gap-3 max-w-[70%]">
-                      <div className="relative bg-gradient-to-br from-cyan-600/80 to-blue-700/80 text-white px-3 py-2 rounded-2xl rounded-br-md shadow-lg border border-cyan-400/30 inline-block">
+                    <div className="flex items-end gap-3 max-w-[75%]">
+                      <div className="relative bg-gradient-to-br from-cyan-600/80 to-blue-700/80 text-white px-5 py-3.5 rounded-2xl rounded-br-md shadow-lg border border-cyan-400/30">
                         <div className="absolute inset-0 bg-cyan-400/10 rounded-2xl rounded-br-md"></div>
-                        <p className="leading-relaxed relative z-10 text-center">{msg.text}</p>
+                        <div className="leading-relaxed relative z-10 text-[15px]">{msg.text}</div>
                       </div>
                       <div className="relative w-8 h-8 bg-gradient-to-br from-cyan-600/70 to-blue-700/70 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm border border-cyan-400/30">
                         <div className="absolute inset-0 bg-cyan-400/10 rounded-xl animate-pulse"></div>
@@ -462,14 +585,14 @@ export default function WelcomePage() {
                   </div>
                 ) : (
                   <div key={i} className="flex justify-start fade-in">
-                    <div className="flex items-end gap-3 max-w-[70%]">
-                      <div className="relative w-8 h-8 bg-slate-900/70 border border-slate-600/40 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm">
+                    <div className="flex items-start gap-3 max-w-[85%]">
+                      <div className="relative w-8 h-8 bg-slate-900/70 border border-slate-600/40 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm mt-1">
                         <div className="absolute inset-0 bg-slate-700/20 rounded-xl animate-pulse"></div>
                         <Bot className="w-4 h-4 text-slate-300 relative z-10" />
                       </div>
-                      <div className="relative bg-slate-900/60 border border-slate-600/40 px-3 py-2 rounded-2xl rounded-bl-md shadow-lg backdrop-blur-sm inline-block">
+                      <div className="relative bg-slate-900/60 border border-slate-600/40 px-5 py-4 rounded-2xl rounded-bl-md shadow-lg backdrop-blur-sm">
                         <div className="absolute inset-0 bg-slate-700/10 rounded-2xl rounded-bl-md"></div>
-                        <p className="leading-relaxed text-slate-100 relative z-10">{msg.text}</p>
+                        <div className="text-slate-100 relative z-10">{formatMessage(msg.text)}</div>
                       </div>
                     </div>
                   </div>
