@@ -155,13 +155,14 @@ def format_response(raw_response):
 def generate_answer(context, question):
     prompt = f"""You are a helpful AI assistant. Answer the question based on the following manual content.
 
-IMPORTANT: Structure your response clearly using:
-• Use bullet points (•) for listing features, items, or key points
-• Use numbered lists (1., 2., 3.) for sequential steps or procedures  
-• Write clear paragraphs separated by blank lines
-• Start with a direct answer to the question
-• Include relevant details and examples from the context
-• End with any important notes or warnings if applicable
+IMPORTANT: Format your response clearly:
+- Use simple dashes (-) for bullet points when listing items
+- Use numbers (1. 2. 3.) for sequential steps
+- Write clear paragraphs separated by blank lines
+- Start with a direct answer to the question
+- Include relevant details and examples from the context
+- Do NOT use special symbols like • or ** or other formatting marks
+- Keep the language professional and easy to read
 
 Manual Content:
 {context}
@@ -287,14 +288,16 @@ def search_online(query):
             prompt = f"""You are a helpful AI assistant. Use the following online search results to answer the question.
 
 CRITICAL INSTRUCTIONS:
-• ONLY use information from the provided search results
-• DO NOT include information about unrelated topics
-• If the search results mention irrelevant topics, IGNORE them completely
-• Focus exclusively on answering the specific question asked
-• Structure your response clearly using bullet points and numbered lists
-• Start with a direct, comprehensive answer
-• Include relevant details from the search results
-• Cite sources when mentioning specific information (e.g., "According to Source 1...")
+- ONLY use information from the provided search results
+- DO NOT include information about unrelated topics
+- If the search results mention irrelevant topics, IGNORE them completely
+- Focus exclusively on answering the specific question asked
+- Use simple dashes (-) for bullet points
+- Use numbers (1. 2. 3.) for sequential steps
+- Start with a direct, comprehensive answer
+- Include relevant details from the search results
+- Cite sources when mentioning specific information (e.g., "According to Source 1...")
+- Do NOT use special symbols like • or ** or other formatting marks
 
 Search Results:
 {context}
@@ -308,10 +311,7 @@ Answer (provide ONLY information relevant to the question):"""
                 answer = format_response(output['choices'][0]['text'])
                 
                 # Clear indication that this is NOT from uploaded documents
-                disclaimer = "\n\n" + "⚠️ " + "="*50 + "\n"
-                disclaimer += "📌 IMPORTANT: This information was NOT found in your uploaded documents.\n"
-                disclaimer += "🌐 This answer is based on online web search results.\n"
-                disclaimer += "="*50 + "\n\n"
+                disclaimer = "\n\nNote: This information was generated online because we couldn't find it in your uploaded documents.\n\n"
                 
                 sources = "\n\nSources:\n"
                 for i, r in enumerate(filtered_results, 1):
@@ -394,24 +394,25 @@ Answer (provide ONLY information relevant to the question):"""
             
             print("⏳ Sending query to Gemini AI...")
             
-            enhanced_query = f"""Answer the following question in a well-structured format:
+            enhanced_query = f"""Answer the following question in a clear, professional format:
 
-• Use bullet points for lists
-• Use numbered steps for procedures
-• Write clear paragraphs
-• Include examples when relevant
+IMPORTANT:
+- Use simple dashes (-) for bullet points
+- Use numbers (1. 2. 3.) for sequential steps
+- Write clear paragraphs separated by blank lines
+- Do NOT use special symbols like • or ** or other formatting marks
+- Keep the language professional and easy to read
 
-Question: {query}"""
+Question: {query}
+
+Provide a detailed, well-structured answer:"""
             
             response = model.generate_content(enhanced_query)
             print("✅ Gemini AI response received")
             print("="*60)
             print("🎉 Gemini search completed successfully!")
             print("="*60 + "\n")
-            disclaimer = "\n\n" + "⚠️ " + "="*50 + "\n"
-            disclaimer += "📍 IMPORTANT: This information was NOT found in your uploaded documents.\n"
-            disclaimer += "🌐 This answer is generated using Gemini AI with web search capabilities.\n"
-            disclaimer += "="*50 + "\n\n"
+            disclaimer = "\n\nNote: This information was generated online because we couldn't find it in your uploaded documents.\n\n"
             return disclaimer + format_response(response.text)
         except Exception as e:
             print(f"❌ Gemini API error: {e}")
@@ -432,7 +433,7 @@ Question: {query}"""
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant. Always structure your responses with bullet points, numbered lists, and clear paragraphs for better readability."},
+                    {"role": "system", "content": "You are a helpful assistant. Structure your responses clearly using simple dashes (-) for bullet points, numbers (1. 2. 3.) for steps, and clear paragraphs. Do NOT use special symbols like • or ** or other formatting marks. Keep the language professional and easy to read."},
                     {"role": "user", "content": query}
                 ],
                 max_tokens=1000,
@@ -442,10 +443,7 @@ Question: {query}"""
             print("="*60)
             print("🎉 OpenAI search completed successfully!")
             print("="*60 + "\n")
-            disclaimer = "\n\n" + "⚠️ " + "="*50 + "\n"
-            disclaimer += "📍 IMPORTANT: This information was NOT found in your uploaded documents.\n"
-            disclaimer += "🌐 This answer is generated using OpenAI GPT with general knowledge.\n"
-            disclaimer += "="*50 + "\n\n"
+            disclaimer = "\n\nNote: This information was generated online because we couldn't find it in your uploaded documents.\n\n"
             return disclaimer + format_response(response.choices[0].message.content)
         except Exception as e:
             print(f"❌ OpenAI API error: {e}")
@@ -528,7 +526,7 @@ def chat():
     print("#"*60 + "\n")
     
     # Add clear indication that this IS from uploaded documents
-    source_indicator = "📚 Source: Your Uploaded Documents/Manual\n" + "="*50 + "\n\n"
+    source_indicator = "Source: Your uploaded manual\n\n"
     response = source_indicator + response
     
     return jsonify({"response": response})

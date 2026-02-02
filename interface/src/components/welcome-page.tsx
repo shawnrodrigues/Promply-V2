@@ -212,23 +212,105 @@ export default function WelcomePage() {
   // Navigation function to go back to uploader
   const handleGoToUploader = () => setStep("uploader");
 
-  // Enhanced function to format message text with better styling
+  // Enhanced function to format message text with markdown support
   const formatMessage = (text: string) => {
+    // Helper to process inline markdown (bold, code, etc.)
+    const processInlineFormatting = (text: string): (string | JSX.Element)[] => {
+      const parts: (string | JSX.Element)[] = [];
+      let remaining = text;
+      let inlineKey = 0;
+
+      while (remaining.length > 0) {
+        // Check for inline code first `code`
+        const codeMatch = remaining.match(/`([^`]+)`/);
+        if (codeMatch && codeMatch.index !== undefined) {
+          // Add text before code
+          if (codeMatch.index > 0) {
+            const beforeMatch = remaining.substring(0, codeMatch.index);
+            // Check for bold in the before text
+            const boldMatch = beforeMatch.match(/\*\*([^*]+)\*\*/);
+            if (boldMatch && boldMatch.index !== undefined) {
+              if (boldMatch.index > 0) {
+                parts.push(beforeMatch.substring(0, boldMatch.index));
+              }
+              parts.push(
+                <strong key={`bold-${inlineKey++}`} className="font-semibold text-cyan-200">
+                  {boldMatch[1]}
+                </strong>
+              );
+              if (boldMatch.index + boldMatch[0].length < beforeMatch.length) {
+                parts.push(beforeMatch.substring(boldMatch.index + boldMatch[0].length));
+              }
+            } else {
+              parts.push(beforeMatch);
+            }
+          }
+          // Add code
+          parts.push(
+            <code key={`code-${inlineKey++}`} className="bg-slate-800/60 text-cyan-300 px-2 py-0.5 rounded text-sm font-mono border border-slate-700/50">
+              {codeMatch[1]}
+            </code>
+          );
+          remaining = remaining.substring(codeMatch.index + codeMatch[0].length);
+          continue;
+        }
+
+        // Check for bold **text**
+        const boldMatch = remaining.match(/\*\*([^*]+)\*\*/);
+        if (boldMatch && boldMatch.index !== undefined) {
+          // Add text before bold
+          if (boldMatch.index > 0) {
+            parts.push(remaining.substring(0, boldMatch.index));
+          }
+          // Add bold text
+          parts.push(
+            <strong key={`bold-${inlineKey++}`} className="font-semibold text-cyan-200">
+              {boldMatch[1]}
+            </strong>
+          );
+          remaining = remaining.substring(boldMatch.index + boldMatch[0].length);
+          continue;
+        }
+
+        // No more special formatting, add the rest
+        parts.push(remaining);
+        break;
+      }
+
+      return parts;
+    };
+
     const lines = text.split('\n');
     const elements: JSX.Element[] = [];
     let currentList: { type: 'bullet' | 'number'; items: string[]; startNum?: number } | null = null;
     let currentParagraph: string[] = [];
+    let currentCodeBlock: string[] = [];
+    let inCodeBlock = false;
     let key = 0;
 
     const flushParagraph = () => {
       if (currentParagraph.length > 0) {
         const paragraphText = currentParagraph.join(' ');
+        const formattedContent = processInlineFormatting(paragraphText);
         elements.push(
           <p key={key++} className="mb-4 last:mb-0 leading-relaxed text-[15px]">
-            {paragraphText}
+            {formattedContent}
           </p>
         );
         currentParagraph = [];
+      }
+    };
+
+    const flushCodeBlock = () => {
+      if (currentCodeBlock.length > 0) {
+        elements.push(
+          <pre key={key++} className="my-4 bg-slate-900/80 border border-slate-700/50 rounded-lg p-4 overflow-x-auto">
+            <code className="text-cyan-300 text-sm font-mono leading-relaxed">
+              {currentCodeBlock.join('\n')}
+            </code>
+          </pre>
+        );
+        currentCodeBlock = [];
       }
     };
 
@@ -237,26 +319,32 @@ export default function WelcomePage() {
         if (currentList.type === 'bullet') {
           elements.push(
             <ul key={key++} className="my-4 space-y-2.5 pl-1">
-              {currentList.items.map((item, idx) => (
-                <li key={idx} className="flex items-start gap-3 text-[15px]">
-                  <span className="text-cyan-400 mt-0.5 font-bold flex-shrink-0">•</span>
-                  <span className="leading-relaxed">{item}</span>
-                </li>
-              ))}
+              {currentList.items.map((item, idx) => {
+                const formattedContent = processInlineFormatting(item);
+                return (
+                  <li key={idx} className="flex items-start gap-3 text-[15px]">
+                    <span className="text-cyan-400 mt-0.5 font-bold flex-shrink-0">•</span>
+                    <span className="leading-relaxed">{formattedContent}</span>
+                  </li>
+                );
+              })}
             </ul>
           );
         } else {
           const startNum = currentList.startNum || 1;
           elements.push(
             <ol key={key++} className="my-4 space-y-2.5 pl-1">
-              {currentList.items.map((item, idx) => (
-                <li key={idx} className="flex items-start gap-3 text-[15px]">
-                  <span className="text-cyan-400 font-semibold flex-shrink-0 min-w-[28px]">
-                    {startNum + idx}.
-                  </span>
-                  <span className="leading-relaxed">{item}</span>
-                </li>
-              ))}
+              {currentList.items.map((item, idx) => {
+                const formattedContent = processInlineFormatting(item);
+                return (
+                  <li key={idx} className="flex items-start gap-3 text-[15px]">
+                    <span className="text-cyan-400 font-semibold flex-shrink-0 min-w-[28px]">
+                      {startNum + idx}.
+                    </span>
+                    <span className="leading-relaxed">{formattedContent}</span>
+                  </li>
+                );
+              })}
             </ol>
           );
         }
@@ -269,8 +357,31 @@ export default function WelcomePage() {
 
       // Empty line - flush current content
       if (!trimmed) {
+        if (inCodeBlock) {
+          currentCodeBlock.push('');
+          return;
+        }
         flushList();
         flushParagraph();
+        return;
+      }
+
+      // Code block delimiter (```)
+      if (trimmed.match(/^```/)) {
+        flushList();
+        flushParagraph();
+        if (inCodeBlock) {
+          flushCodeBlock();
+          inCodeBlock = false;
+        } else {
+          inCodeBlock = true;
+        }
+        return;
+      }
+
+      // Inside code block - collect lines
+      if (inCodeBlock) {
+        currentCodeBlock.push(line);
         return;
       }
 
@@ -315,9 +426,10 @@ export default function WelcomePage() {
       if (trimmed.length < 60 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
         flushList();
         flushParagraph();
+        const formattedHeader = processInlineFormatting(trimmed);
         elements.push(
           <h4 key={key++} className="font-semibold text-cyan-300 mt-5 mb-2 text-[15px]">
-            {trimmed}
+            {formattedHeader}
           </h4>
         );
         return;
@@ -329,6 +441,9 @@ export default function WelcomePage() {
     });
 
     // Flush any remaining content
+    if (inCodeBlock) {
+      flushCodeBlock();
+    }
     flushList();
     flushParagraph();
 
