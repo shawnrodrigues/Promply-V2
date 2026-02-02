@@ -155,24 +155,27 @@ def format_response(raw_response):
 def generate_answer(context, question):
     prompt = f"""You are a helpful AI assistant. Answer the question based on the following manual content.
 
-IMPORTANT: Format your response clearly:
+IMPORTANT INSTRUCTIONS:
+- Provide a COMPREHENSIVE and DETAILED answer using ALL relevant information from the manual
+- Include specific details, examples, features, and explanations found in the context
 - Use simple dashes (-) for bullet points when listing items
-- Use numbers (1. 2. 3.) for sequential steps
-- Write clear paragraphs separated by blank lines
-- Start with a direct answer to the question
-- Include relevant details and examples from the context
+- Use numbers (1. 2. 3.) for sequential steps or procedures
+- Write clear, informative paragraphs separated by blank lines
+- Start with a direct answer, then provide thorough details
+- Include ALL relevant information from the manual - do not summarize too briefly
+- Explain concepts fully with context and examples when available
 - Do NOT use special symbols like • or ** or other formatting marks
-- Keep the language professional and easy to read
+- Keep the language professional, clear, and informative
 
 Manual Content:
 {context}
 
 Question: {question}
 
-Answer (provide a well-structured, detailed response):"""
+Answer (provide a thorough, comprehensive, and detailed response using all relevant information):"""
 
     try:
-        output = llm(prompt, max_tokens=1000, temperature=0.7, stop=["Question:", "Manual Content:"])
+        output = llm(prompt, max_tokens=2000, temperature=0.7, stop=["Question:", "Manual Content:"])
         return format_response(output['choices'][0]['text'])
     except Exception as e:
         return f"Error generating answer: {e}"
@@ -491,11 +494,13 @@ def chat():
     print("⏳ Generating query embedding...")
     results = collection.query(
         query_embeddings=[embed_text(query)],
-        n_results=5
+        n_results=10  # Increased from 5 to 10 for more comprehensive context
     )
     print("✅ Vector database search completed")
 
-    context = "\n".join(results.get("documents", [[]])[0]) if results.get("documents") else ""
+    # Format context with clear separation between chunks
+    context_chunks = results.get("documents", [[]])[0] if results.get("documents") else []
+    context = "\n\n---\n\n".join(context_chunks) if context_chunks else ""
 
     # Check relevance
     distances = results.get('distances', [[]])[0] if results.get('distances') else []
