@@ -40,7 +40,7 @@ print(f"SentenceTransformer running on: {device}")
 embed_model = SentenceTransformer("all-mpnet-base-v2", device=device)
 
 OFFLINE_ONLY = True
-SEARCH_ENGINE = "duckduckgo"
+SEARCH_ENGINE = "gemini"  # Changed from duckduckgo to gemini for better reliability
 
 print("=" * 60)
 print("PROMPTLY STARTING...")
@@ -177,69 +177,222 @@ Answer (provide a well-structured, detailed response):"""
         return f"Error generating answer: {e}"
 
 def search_online(query):
-    print(f"Searching online using {SEARCH_ENGINE.upper()}")
+    print("\n" + "="*60)
+    print(f"🌐 ONLINE SEARCH INITIATED")
+    print(f"Search Engine: {SEARCH_ENGINE.upper()}")
+    print(f"Query: {query}")
+    print("="*60)
+    
+    # Quick internet connectivity check
+    try:
+        import urllib.request
+        urllib.request.urlopen('https://www.google.com', timeout=5)
+        print("✓ Internet connection verified")
+    except Exception as e:
+        print(f"✗ Internet connectivity issue: {e}")
+        return "Unable to connect to the internet. Please check your network connection and try again."
 
     if SEARCH_ENGINE == "duckduckgo":
         try:
-            print("Using DuckDuckGo Search (free)")
-            ddgs = DDGS()
-            results = list(ddgs.text(query, max_results=5))
+            print("🔍 Starting DuckDuckGo Search (free, no API key required)...")
+            print("⏳ Fetching search results from DuckDuckGo...")
+            
+            results = []
+            
+            try:
+                # Simplified single attempt approach
+                print("   Attempting search...")
+                with DDGS() as ddgs:
+                    results = [r for r in ddgs.text(query, region='wt-wt', safesearch='moderate', timelimit='y', max_results=10)]
+                
+                if results:
+                    print(f"   ✓ Got {len(results)} results")
+                else:
+                    print("   ✗ No results returned")
+                    
+            except Exception as e:
+                error_details = str(e)
+                print(f"   ✗ Search failed: {error_details[:200]}")
+                
+                # Check if it's a rate limit or blocking issue
+                if "ratelimit" in error_details.lower() or "202" in error_details or "blocked" in error_details.lower():
+                    return ("DuckDuckGo is currently rate-limiting or blocking requests.\n\n"
+                           "This is a known issue with DuckDuckGo's free search.\n\n"
+                           "Please try one of these alternatives:\n"
+                           "• Wait 1-2 minutes and try again\n"
+                           "• Switch to Gemini search engine (requires free API key from https://makersuite.google.com/app/apikey)\n"
+                           "• Switch to OpenAI search engine (requires API key)\n\n"
+                           "To switch search engines, use the settings in your interface.")
+                else:
+                    raise
+            
+            print(f"✅ Retrieved {len(results)} search results")
 
             if not results:
-                return "No search results found."
+                print("⚠️ No search results found for this query after all attempts")
+                print("="*60 + "\n")
+                return ("No search results found from DuckDuckGo.\n\n"
+                       "DuckDuckGo may be rate-limiting requests or temporarily unavailable.\n\n"
+                       "Recommendations:\n"
+                       "• Wait 1-2 minutes before trying again\n"
+                       "• Try a different search query\n"
+                       "• Switch to Gemini (free, get API key at: https://makersuite.google.com/app/apikey)\n"
+                       "• Switch to OpenAI (paid, requires API key)\n\n"
+                       "Note: DuckDuckGo often blocks automated searches. Gemini is recommended for better reliability.")
 
-            formatted = []
+            print("📝 Processing search results...")
+            
+            # Filter and validate results for relevance
+            query_lower = query.lower()
+            # Remove common words that don't help with relevance
+            stop_words = {'what', 'is', 'are', 'the', 'a', 'an', 'how', 'why', 'when', 'where', 'who', 'which'}
+            query_words = set(word for word in query_lower.split() if word not in stop_words and len(word) > 1)
+            
+            filtered_results = []
             for i, r in enumerate(results, 1):
+                title = r.get('title', '').lower()
+                body = r.get('body', '').lower()
+                combined = title + " " + body
+                
+                # Check if any significant query word appears in the result
+                has_match = False
+                for word in query_words:
+                    # Use 'in' to handle partial matches (e.g., "c++" in "C++ programming")
+                    if word in combined:
+                        has_match = True
+                        break
+                
+                if has_match:
+                    print(f"   [{i}] ✓ RELEVANT: {r.get('title', 'No title')[:60]}...")
+                    filtered_results.append(r)
+                else:
+                    print(f"   [{i}] ✗ FILTERED: {r.get('title', 'No title')[:60]}... (not relevant)")
+            
+            # If filtering removed everything, just use all results
+            if not filtered_results:
+                print("⚠️ Relevance filter too strict, using all results")
+                filtered_results = results
+            else:
+                print(f"📊 Kept {len(filtered_results)} relevant results out of {len(results)}")
+            
+            formatted = []
+            for i, r in enumerate(filtered_results, 1):
                 formatted.append(
                     f"Source {i}: {r.get('title', 'No title')}\n{r.get('body', '')}\nURL: {r.get('href', '')}"
                 )
 
             context = "\n\n---\n\n".join(formatted)
+            print("\n🤖 Generating answer using local LLaMA model...")
 
             prompt = f"""You are a helpful AI assistant. Use the following online search results to answer the question.
 
-IMPORTANT: Structure your response clearly using:
-• Use bullet points (•) for listing features, items, or key points
-• Use numbered lists (1., 2., 3.) for sequential steps or procedures
-• Write clear paragraphs separated by blank lines
+CRITICAL INSTRUCTIONS:
+• ONLY use information from the provided search results
+• DO NOT include information about unrelated topics
+• If the search results mention irrelevant topics, IGNORE them completely
+• Focus exclusively on answering the specific question asked
+• Structure your response clearly using bullet points and numbered lists
 • Start with a direct, comprehensive answer
 • Include relevant details from the search results
 • Cite sources when mentioning specific information (e.g., "According to Source 1...")
-• End with a summary or conclusion if appropriate
 
 Search Results:
 {context}
 
 Question: {query}
 
-Answer (provide a well-structured, detailed response):"""
+Answer (provide ONLY information relevant to the question):"""
 
             try:
                 output = llm(prompt, max_tokens=1000, temperature=0.7, stop=["Question:", "Search Results:"])
                 answer = format_response(output['choices'][0]['text'])
                 
-                sources = "\n\n" + "=" * 50 + "\n\nSources:\n"
-                for i, r in enumerate(results, 1):
+                # Clear indication that this is NOT from uploaded documents
+                disclaimer = "\n\n" + "⚠️ " + "="*50 + "\n"
+                disclaimer += "📌 IMPORTANT: This information was NOT found in your uploaded documents.\n"
+                disclaimer += "🌐 This answer is based on online web search results.\n"
+                disclaimer += "="*50 + "\n\n"
+                
+                sources = "\n\nSources:\n"
+                for i, r in enumerate(filtered_results, 1):
                     sources += f"  {i}. {r.get('title', 'No title')}\n     {r.get('href', '')}\n"
                 
-                print("DuckDuckGo search completed")
-                return answer + sources
+                print("✅ Answer generated successfully")
+                print("📊 Formatting response with sources...")
+                print("="*60)
+                print("🎉 DuckDuckGo search completed successfully!")
+                print("="*60 + "\n")
+                return disclaimer + answer + "\n\n" + sources
             except Exception as e:
-                print(f"Error generating answer: {e}")
+                print(f"❌ Error generating answer: {e}")
+                print("="*60 + "\n")
                 return f"Error processing search results: {e}"
                 
         except Exception as e:
-            print(f"DuckDuckGo search failed: {e}")
-            return f"DuckDuckGo search failed: {e}"
+            error_msg = str(e)
+            print(f"❌ DuckDuckGo search failed: {error_msg[:200]}")
+            print("="*60 + "\n")
+            
+            # Provide helpful error message based on the error type
+            if "timeout" in error_msg.lower():
+                return ("DuckDuckGo search timed out.\n\n"
+                       "This usually means DuckDuckGo is blocking automated requests.\n\n"
+                       "Solutions:\n"
+                       "• Switch to Gemini (recommended, free): Get API key at https://makersuite.google.com/app/apikey\n"
+                       "• Wait several minutes before trying DuckDuckGo again\n"
+                       "• Use OpenAI (paid) as alternative")
+            elif "ratelimit" in error_msg.lower() or "rate" in error_msg.lower() or "429" in error_msg or "202" in error_msg:
+                return ("DuckDuckGo is rate-limiting or blocking automated requests.\n\n"
+                       "This is a common issue with DuckDuckGo's free service.\n\n"
+                       "Recommended solution:\n"
+                       "• Switch to Gemini search engine (free, more reliable)\n"
+                       "  Get API key at: https://makersuite.google.com/app/apikey\n"
+                       "• Add the API key to your .env file as: GEMINI_API_KEY=your_key_here\n"
+                       "• Change search engine to Gemini in the interface")
+            else:
+                return (f"DuckDuckGo search encountered an error.\n\n"
+                       f"Error details: {error_msg[:300]}\n\n"
+                       "Recommendations:\n"
+                       "• DuckDuckGo frequently blocks automated searches\n"
+                       "• Switch to Gemini (free, get API key at: https://makersuite.google.com/app/apikey)\n"
+                       "• Or use OpenAI (paid, requires API key)\n\n"
+                       "Gemini is the recommended alternative for reliable web search.")
 
     elif SEARCH_ENGINE == "gemini":
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if not gemini_api_key:
+            print("❌ Gemini API key not found in .env file")
+            print("="*60 + "\n")
             return "Gemini API key not found in .env file."
         
         try:
+            print("🔍 Using Gemini AI (requires API key)...")
+            print("⏳ Configuring Gemini API...")
             genai.configure(api_key=gemini_api_key)
-            model = genai.GenerativeModel('gemini-pro')
+            
+            # List available models and find one that supports generateContent
+            print("   Finding available Gemini models...")
+            try:
+                available_models = genai.list_models()
+                suitable_model = None
+                
+                for m in available_models:
+                    # Find a model that supports generateContent
+                    if 'generateContent' in m.supported_generation_methods:
+                        suitable_model = m.name
+                        print(f"   ✓ Found working model: {suitable_model}")
+                        break
+                
+                if not suitable_model:
+                    return "Gemini API error: No models available that support text generation. Please verify your API key at https://makersuite.google.com/app/apikey"
+                
+                model = genai.GenerativeModel(suitable_model)
+                
+            except Exception as e:
+                print(f"   ✗ Could not list models: {str(e)[:200]}")
+                return f"Gemini API error: Could not access Gemini models. Your API key may be invalid or expired. Error: {str(e)[:200]}\n\nPlease get a new API key at: https://makersuite.google.com/app/apikey"
+            
+            print("⏳ Sending query to Gemini AI...")
             
             enhanced_query = f"""Answer the following question in a well-structured format:
 
@@ -251,16 +404,30 @@ Answer (provide a well-structured, detailed response):"""
 Question: {query}"""
             
             response = model.generate_content(enhanced_query)
-            return format_response(response.text)
+            print("✅ Gemini AI response received")
+            print("="*60)
+            print("🎉 Gemini search completed successfully!")
+            print("="*60 + "\n")
+            disclaimer = "\n\n" + "⚠️ " + "="*50 + "\n"
+            disclaimer += "📍 IMPORTANT: This information was NOT found in your uploaded documents.\n"
+            disclaimer += "🌐 This answer is generated using Gemini AI with web search capabilities.\n"
+            disclaimer += "="*50 + "\n\n"
+            return disclaimer + format_response(response.text)
         except Exception as e:
+            print(f"❌ Gemini API error: {e}")
+            print("="*60 + "\n")
             return f"Gemini API error: {e}"
 
     elif SEARCH_ENGINE == "openai":
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if not openai_api_key:
+            print("❌ OpenAI API key not found in .env file")
+            print("="*60 + "\n")
             return "OpenAI API key not found in .env file."
         
         try:
+            print("🔍 Using OpenAI GPT (requires API key)...")
+            print("⏳ Sending query to OpenAI...")
             client = OpenAI(api_key=openai_api_key)
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -271,8 +438,18 @@ Question: {query}"""
                 max_tokens=1000,
                 temperature=0.7
             )
-            return format_response(response.choices[0].message.content)
+            print("✅ OpenAI response received")
+            print("="*60)
+            print("🎉 OpenAI search completed successfully!")
+            print("="*60 + "\n")
+            disclaimer = "\n\n" + "⚠️ " + "="*50 + "\n"
+            disclaimer += "📍 IMPORTANT: This information was NOT found in your uploaded documents.\n"
+            disclaimer += "🌐 This answer is generated using OpenAI GPT with general knowledge.\n"
+            disclaimer += "="*50 + "\n\n"
+            return disclaimer + format_response(response.choices[0].message.content)
         except Exception as e:
+            print(f"❌ OpenAI API error: {e}")
+            print("="*60 + "\n")
             return f"OpenAI API error: {e}"
 
     return "Search engine not configured."
@@ -283,28 +460,42 @@ def chat():
     if not query:
         return jsonify({"response": "No query provided."})
     
-    print(f"Processing query: '{query[:50]}...'")
+    print("\n" + "#"*60)
+    print(f"💬 NEW QUERY RECEIVED")
+    print(f"Query: {query}")
+    print("#"*60)
+    print(f"🔧 Current Mode: {'OFFLINE' if OFFLINE_ONLY else 'ONLINE'}")
 
-    # Check if we have documents
+    # If ONLINE mode is enabled, search the web directly
+    if not OFFLINE_ONLY:
+        print("🌐 ONLINE MODE: Searching the web directly...")
+        print("#"*60)
+        response = search_online(query)
+        return jsonify({"response": response})
+
+    # OFFLINE MODE: Check if we have documents
     try:
         all_docs = collection.get(limit=1)
         has_documents = len(all_docs.get('ids', [])) > 0
+        print(f"📚 Documents in database: {'Yes' if has_documents else 'No'}")
     except:
         has_documents = False
+        print("⚠️ Could not check document database")
 
     # If no documents and offline mode
     if not has_documents:
-        if OFFLINE_ONLY:
-            return jsonify({"response": "No documents uploaded. Please upload documents to get started."})
-        else:
-            response = search_online(query)
-            return jsonify({"response": response})
+        print("❌ No documents uploaded and in OFFLINE mode")
+        print("#"*60 + "\n")
+        return jsonify({"response": "No documents uploaded. Please upload documents to get started."})
 
     # Query the vector database
+    print("🔍 Searching in uploaded documents...")
+    print("⏳ Generating query embedding...")
     results = collection.query(
         query_embeddings=[embed_text(query)],
         n_results=5
     )
+    print("✅ Vector database search completed")
 
     context = "\n".join(results.get("documents", [[]])[0]) if results.get("documents") else ""
 
@@ -312,24 +503,34 @@ def chat():
     distances = results.get('distances', [[]])[0] if results.get('distances') else []
     is_relevant = False
     
+    print("📊 Analyzing relevance of search results...")
     if distances and len(distances) > 0:
         best_distance = min(distances)
         is_relevant = best_distance < 0.8
-        print(f"Best match distance: {best_distance:.3f} ({'relevant' if is_relevant else 'not relevant'})")
+        print(f"   Best match distance: {best_distance:.3f}")
+        print(f"   Relevance threshold: 0.8")
+        print(f"   Result: {'✅ RELEVANT' if is_relevant else '❌ NOT RELEVANT'}")
 
-    # If not relevant and online mode, search online
-    if (not context or not is_relevant) and not OFFLINE_ONLY:
-        print("No relevant local context, searching online...")
-        response = search_online(query)
-        return jsonify({"response": response})
-    
-    # If not relevant and offline mode
+    # If not relevant in offline mode
     if not context or not is_relevant:
+        print("\n❌ No relevant information found in uploaded documents")
+        print("🔒 Current Mode: OFFLINE - Cannot search online")
+        print("#"*60 + "\n")
         return jsonify({"response": "No relevant information found in uploaded documents."})
 
     # Generate answer from local documents
-    print("Using local document context")
+    print("\n" + "*"*60)
+    print("✅ Using information from uploaded documents")
+    print("*"*60)
+    print("🤖 Generating answer using local LLaMA model...")
     response = generate_answer(context, query)
+    print("✅ Answer generated successfully from local documents")
+    print("#"*60 + "\n")
+    
+    # Add clear indication that this IS from uploaded documents
+    source_indicator = "📚 Source: Your Uploaded Documents/Manual\n" + "="*50 + "\n\n"
+    response = source_indicator + response
+    
     return jsonify({"response": response})
 
 @app.route("/status", methods=["GET"])

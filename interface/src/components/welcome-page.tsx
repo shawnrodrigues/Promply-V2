@@ -10,6 +10,7 @@ export default function WelcomePage() {
   const [chat, setChat] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [input, setInput] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
+  const [searchStatus, setSearchStatus] = useState<string>("");
   const [isOfflineMode, setIsOfflineMode] = useState(true); // Changed to offline by default as per backend
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,13 +101,35 @@ export default function WelcomePage() {
     setChat(prev => [...prev, { role: "user", text: userMessage }]);
     setInput("");
     setAiTyping(true);
+    setSearchStatus("Sending query to backend...");
+    
+    // Console logging for user visibility
+    console.log('💬 Sending query to backend...');
+    console.log(`📝 Query: "${userMessage}"`);
+    console.log(`🔧 Mode: ${isOfflineMode ? 'OFFLINE' : 'ONLINE'}`);
     
     try {
+      const startTime = Date.now();
+      
+      // Update status while waiting
+      const statusTimer = setTimeout(() => {
+        if (isOfflineMode) {
+          setSearchStatus("Searching in uploaded documents...");
+        } else {
+          setSearchStatus("Searching documents and preparing web search if needed...");
+        }
+      }, 500);
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: userMessage })
       });
+      
+      clearTimeout(statusTimer);
+      
+      const endTime = Date.now();
+      const duration = ((endTime - startTime) / 1000).toFixed(2);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -118,12 +141,23 @@ export default function WelcomePage() {
         throw new Error(data.error);
       }
       
+      // Detect if response came from web search
+      if (data.response.includes('This information was NOT found in your uploaded documents')) {
+        console.log('🌐 Response source: WEB SEARCH');
+      } else if (data.response.includes('Source: Your Uploaded Documents')) {
+        console.log('📚 Response source: UPLOADED DOCUMENTS');
+      }
+      
+      console.log(`✅ Response received in ${duration}s`);
+      console.log('📊 Response preview:', data.response.substring(0, 100) + '...');
+      
       setChat(prev => [...prev, { role: "ai", text: data.response }]);
     } catch (error) {
-      console.error('Chat failed:', error);
+      console.error('❌ Chat failed:', error);
       setChat(prev => [...prev, { role: "ai", text: `Sorry, there was an error: ${error instanceof Error ? error.message : 'Unknown error'}` }]);
     } finally {
       setAiTyping(false);
+      setSearchStatus("");
     }
   };
 
@@ -614,7 +648,9 @@ export default function WelcomePage() {
                           <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
                           <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
                         </div>
-                        <span className="text-cyan-300 text-sm">processing...</span>
+                        <span className="text-cyan-300 text-sm">
+                          {searchStatus || "processing..."}
+                        </span>
                       </div>
                     </div>
                   </div>
