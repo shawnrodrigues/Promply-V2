@@ -707,7 +707,7 @@ export default function WelcomePage() {
                     <Bot className="w-8 h-8 text-cyan-400 relative z-10" />
                   </div>
                   <h3 className="text-2xl font-semibold text-cyan-100 mb-3">
-                    {pdfFiles.length > 0 ? "Neural Analysis Ready" : "AI System Online"}
+                    {pdfFiles.length > 0 ? "Neural Analysis Ready" : "Hello i'm your intelligent assistant."}
                   </h3>
                   <p className="text-slate-300 mb-8">
                     {pdfFiles.length > 0 
