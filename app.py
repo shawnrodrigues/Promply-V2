@@ -118,6 +118,7 @@ def upload():
 
     print(f"PDF split into {len(chunks)} chunks. Adding to vector DB...")
     for idx, chunk in tqdm(enumerate(chunks), total=len(chunks), desc="Processing chunks"):
+        # Store in Vector Database
         collection.add(
             documents=[chunk],
             embeddings=[embed_text(chunk)],
@@ -492,6 +493,7 @@ def chat():
     # Query the vector database
     print("🔍 Searching in uploaded documents...")
     print("⏳ Generating query embedding...")
+    # Similarity Search
     results = collection.query(
         query_embeddings=[embed_text(query)],
         n_results=10  # Increased from 5 to 10 for more comprehensive context
