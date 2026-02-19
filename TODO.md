@@ -17,13 +17,12 @@
 - [x] Auto-refresh document status after upload
 - [x] GPU memory usage optimization
 - [x] Offline mode toggle in frontend
-- [ ] Enhance UI responsiveness on mobile devices
+- [x] Enhance UI responsiveness on mobile devices
 
 ---
 
 #### 📝 Documentation
 - [x] Developer setup guide
-- [ ] API endpoints (if any)
 - [ ] Contribution guidelines
 
 ---

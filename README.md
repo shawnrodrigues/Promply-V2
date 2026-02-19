@@ -148,9 +148,13 @@ Uploading UI
 
 ![Uploading Page](<Images/Upload UI.png>)
 
-Progress Bar/UI
+Progress Bar UI
 
 ![Progress UI](<Images/UI Progress.png>)
+
+Chat-Box UI
+
+![Chat-Box UI](<Images/Chat-Box UI.png>)
 
 ---
 
