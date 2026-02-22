@@ -3,6 +3,11 @@ import os
 from dotenv import load_dotenv
 import chromadb
 import torch
+
+# Set offline mode for transformers to prevent network calls during startup
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '1'
+
 from sentence_transformers import SentenceTransformer
 from pdfminer.high_level import extract_text
 from llama_cpp import Llama
@@ -37,7 +42,16 @@ if not torch.cuda.is_available():
 
 device = "cuda"
 print(f"SentenceTransformer running on: {device}")
-embed_model = SentenceTransformer("all-mpnet-base-v2", device=device)
+
+# Load SentenceTransformer (offline mode enabled via environment variables)
+try:
+    embed_model = SentenceTransformer("all-mpnet-base-v2", device=device)
+    print("✓ Loaded embedding model successfully")
+except Exception as e:
+    print(f"ERROR: Could not load embedding model: {e}")
+    print("SOLUTION: The model needs to be downloaded once with internet connection.")
+    print("After the first download, the model will be cached locally and work offline.")
+    raise RuntimeError(f"Failed to load embedding model. Please connect to internet for first-time setup. Error: {e}")
 
 OFFLINE_ONLY = True
 SEARCH_ENGINE = "gemini"  # Changed from duckduckgo to gemini for better reliability
