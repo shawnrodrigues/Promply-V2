@@ -18,6 +18,24 @@ import pytesseract
 from PIL import Image
 import io
 import google.generativeai as genai
+import platform
+
+# Configure Tesseract for Windows
+if platform.system() == 'Windows':
+    # Common Tesseract installation paths on Windows
+    tesseract_paths = [
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+        r'C:\Tesseract-OCR\tesseract.exe'
+    ]
+    for path in tesseract_paths:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            print(f"✓ Tesseract found at: {path}")
+            break
+    else:
+        print("⚠ WARNING: Tesseract not found at standard locations.")
+        print("  OCR may not work. Install from: https://github.com/UB-Mannheim/tesseract/wiki")
 from openai import OpenAI
 from duckduckgo_search import DDGS
 
@@ -69,19 +87,42 @@ def parse_pdf_text(path):
     return extract_text(path)
 
 def extract_images_and_ocr(pdf_path):
+    """Extract images from PDF and perform OCR with proper error handling."""
     doc = fitz.open(pdf_path)
     image_texts = []
-    for page_number in range(len(doc)):
-        page = doc.load_page(page_number)
-        images = page.get_images(full=True)
-        for img in images:
-            xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            image = Image.open(io.BytesIO(image_bytes))
-            text = pytesseract.image_to_string(image)
-            image_texts.append(text)
-    return "\n".join(image_texts)
+    total_images = 0
+    successful_ocr = 0
+    
+    try:
+        for page_number in range(len(doc)):
+            page = doc.load_page(page_number)
+            images = page.get_images(full=True)
+            total_images += len(images)
+            
+            for img in images:
+                try:
+                    xref = img[0]
+                    base_image = doc.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    image = Image.open(io.BytesIO(image_bytes))
+                    
+                    # Perform OCR
+                    text = pytesseract.image_to_string(image)
+                    if text.strip():  # Only add non-empty text
+                        image_texts.append(text)
+                        successful_ocr += 1
+                except Exception as img_error:
+                    print(f"  ⚠ OCR failed for image on page {page_number + 1}: {str(img_error)}")
+                    continue
+        
+        print(f"  📊 OCR Stats: {total_images} images found, {successful_ocr} successfully processed")
+        if total_images > 0 and successful_ocr == 0:
+            print("  ⚠ WARNING: No text extracted from images. Check Tesseract installation.")
+        
+        return {"text": "\n".join(image_texts), "images_found": total_images, "images_processed": successful_ocr}
+    except Exception as e:
+        print(f"  ❌ OCR Error: {str(e)}")
+        return {"text": "", "images_found": 0, "images_processed": 0, "error": str(e)}
 
 chroma_client = chromadb.PersistentClient(path=VECTORDB_FOLDER)
 
@@ -120,8 +161,24 @@ def upload():
     path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(path)
 
+    # Extract text from PDF
+    print("  📄 Extracting text from PDF...")
     text = parse_pdf_text(path)
-    image_text = extract_images_and_ocr(path)
+    text_length = len(text.strip())
+    print(f"  ✓ Extracted {text_length} characters of text")
+    
+    # Extract images and perform OCR
+    print("  🖼️ Extracting images and performing OCR...")
+    ocr_result = extract_images_and_ocr(path)
+    image_text = ocr_result.get("text", "")
+    ocr_length = len(image_text.strip())
+    print(f"  ✓ Extracted {ocr_length} characters from OCR")
+    
+    # Show preview of OCR text if any
+    if ocr_length > 0:
+        preview = image_text[:200].replace('\n', ' ').strip()
+        print(f"  📋 OCR Preview: {preview}...")
+    
     combined_text = text + "\n" + image_text
 
     text_splitter = RecursiveCharacterTextSplitter(
@@ -140,11 +197,28 @@ def upload():
         )
     
     print(f"Upload complete: {file.filename}")
-    return jsonify({
+    
+    # Prepare detailed response
+    response_data = {
         "status": "success",
         "message": "PDF uploaded and processed",
-        "mode": "offline" if OFFLINE_ONLY else "online"
-    })
+        "mode": "offline" if OFFLINE_ONLY else "online",
+        "stats": {
+            "text_characters": text_length,
+            "ocr_characters": ocr_length,
+            "images_found": ocr_result.get("images_found", 0),
+            "images_processed": ocr_result.get("images_processed", 0),
+            "total_chunks": len(chunks)
+        }
+    }
+    
+    # Add warning if OCR failed
+    if ocr_result.get("error"):
+        response_data["warning"] = f"OCR Error: {ocr_result['error']}"
+    elif ocr_result.get("images_found", 0) > 0 and ocr_result.get("images_processed", 0) == 0:
+        response_data["warning"] = "Images found but OCR failed. Check Tesseract installation."
+    
+    return jsonify(response_data)
 
 def format_response(raw_response):
     """Enhanced formatting for better readability"""
@@ -168,21 +242,21 @@ def format_response(raw_response):
     return '\n'.join(formatted)
 
 def generate_answer(context, question):
-    prompt = f"""You are a helpful AI assistant. Answer the question based on the following manual content.
+    prompt = f"""You are a helpful AI assistant. Answer the question based on the following document content.
 
 IMPORTANT INSTRUCTIONS:
-- Provide a COMPREHENSIVE and DETAILED answer using ALL relevant information from the manual
+- Provide a COMPREHENSIVE and DETAILED answer using ALL relevant information from the document
 - Include specific details, examples, features, and explanations found in the context
+- For resume/CV questions: Extract names, titles, education, experience, etc. directly
+- For document questions: Provide exact information without paraphrasing
 - Use simple dashes (-) for bullet points when listing items
 - Use numbers (1. 2. 3.) for sequential steps or procedures
 - Write clear, informative paragraphs separated by blank lines
 - Start with a direct answer, then provide thorough details
-- Include ALL relevant information from the manual - do not summarize too briefly
-- Explain concepts fully with context and examples when available
 - Do NOT use special symbols like • or ** or other formatting marks
 - Keep the language professional, clear, and informative
 
-Manual Content:
+Document Content:
 {context}
 
 Question: {question}
@@ -501,8 +575,23 @@ def chat():
     # If no documents and offline mode
     if not has_documents:
         print("❌ No documents uploaded and in OFFLINE mode")
-        print("#"*60 + "\n")
-        return jsonify({"response": "No documents uploaded. Please upload documents to get started."})
+        
+        # Check if we can fallback to online search
+        has_gemini = bool(os.getenv("GEMINI_API_KEY"))
+        has_openai = bool(os.getenv("OPENAI_API_KEY"))
+        can_search_online = has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo"
+        
+        if can_search_online:
+            print("🌐 No documents available - Falling back to ONLINE SEARCH")
+            print(f"   Using search engine: {SEARCH_ENGINE}")
+            print("#"*60)
+            
+            online_response = search_online(query)
+            fallback_note = "\nNote: No documents were uploaded, so this information was generated from online sources.\n\n"
+            return jsonify({"response": fallback_note + online_response})
+        else:
+            print("#"*60 + "\n")
+            return jsonify({"response": "No documents uploaded. Please upload documents to get started."})
 
     # Query the vector database
     print("🔍 Searching in uploaded documents...")
@@ -510,44 +599,117 @@ def chat():
     # Similarity Search
     results = collection.query(
         query_embeddings=[embed_text(query)],
-        n_results=10  # Increased from 5 to 10 for more comprehensive context
+        n_results=20  # Increased to 20 to catch more potential matches
     )
     print("✅ Vector database search completed")
 
-    # Format context with clear separation between chunks
-    context_chunks = results.get("documents", [[]])[0] if results.get("documents") else []
-    context = "\n\n---\n\n".join(context_chunks) if context_chunks else ""
+    # Get all results
+    all_chunks = results.get("documents", [[]])[0] if results.get("documents") else []
+    all_ids = results.get("ids", [[]])[0] if results.get("ids") else []
+    all_distances = results.get('distances', [[]])[0] if results.get('distances') else []
+    
+    if not all_chunks:
+        context = ""
+        context_chunks = []
+        distances = []
+        best_file = "Unknown"
+    else:
+        # Group chunks by source file
+        file_groups = {}
+        for chunk_id, chunk, distance in zip(all_ids, all_chunks, all_distances):
+            # Extract filename from chunk ID (format: filename_chunknum)
+            filename = "_".join(chunk_id.split("_")[:-1])
+            if filename not in file_groups:
+                file_groups[filename] = []
+            file_groups[filename].append({
+                'id': chunk_id,
+                'chunk': chunk,
+                'distance': distance
+            })
+        
+        # Find the file with the best (lowest) average distance in top results
+        file_scores = {}
+        for filename, items in file_groups.items():
+            # Use average of top 3 distances from this file
+            top_distances = sorted([item['distance'] for item in items])[:3]
+            file_scores[filename] = sum(top_distances) / len(top_distances)
+        
+        # Get the best matching file
+        best_file = min(file_scores, key=file_scores.get)
+        best_file_score = file_scores[best_file]
+        
+        print(f"\n📁 File relevance scores (lower = better):")
+        for filename, score in sorted(file_scores.items(), key=lambda x: x[1])[:3]:
+            print(f"   • {filename}: {score:.4f}")
+        print(f"\n✅ Selected file: {best_file}")
+        
+        # Use only chunks from the best matching file
+        selected_items = sorted(file_groups[best_file], key=lambda x: x['distance'])[:5]
+        context_chunks = [item['chunk'] for item in selected_items]
+        distances = [item['distance'] for item in selected_items]
+        context = "\n\n---\n\n".join(context_chunks)
 
     # Check relevance
-    distances = results.get('distances', [[]])[0] if results.get('distances') else []
     is_relevant = False
     
-    print("📊 Analyzing relevance of search results...")
+    print("\n📊 Analyzing relevance of search results...")
+    print(f"   Found {len(context_chunks)} chunks from selected file")
+    
+    # Show previews of top 5 matches with ALL scores
+    if context_chunks and distances:
+        print(f"   Top {len(context_chunks)} matches from {best_file}:")
+        for i in range(len(context_chunks)):
+            preview = context_chunks[i][:150].replace('\n', ' ')
+            print(f"   [{i+1}] Distance: {distances[i]:.4f} | Preview: {preview}...")
+    
     if distances and len(distances) > 0:
         best_distance = min(distances)
-        is_relevant = best_distance < 0.8
-        print(f"   Best match distance: {best_distance:.3f}")
-        print(f"   Relevance threshold: 0.8")
-        print(f"   Result: {'✅ RELEVANT' if is_relevant else '❌ NOT RELEVANT'}")
+        # Further relaxed threshold from 1.2 to 1.5
+        # Semantic search can have high distances for factual queries
+        # e.g., "What is X's profession?" vs "X Computer Engineer" = high distance
+        is_relevant = best_distance < 1.5
+        print(f"   Best match distance: {best_distance:.4f}")
+        print(f"   Relevance threshold: 1.5 (very relaxed for better recall)")
+        print(f"   Result: {'✅ RELEVANT' if is_relevant else '❌ NOT RELEVANT (try rephrasing)'}")
 
     # If not relevant in offline mode
     if not context or not is_relevant:
         print("\n❌ No relevant information found in uploaded documents")
-        print("🔒 Current Mode: OFFLINE - Cannot search online")
-        print("#"*60 + "\n")
-        return jsonify({"response": "No relevant information found in uploaded documents."})
+        if distances and len(distances) > 0:
+            print(f"   Closest match was {best_distance:.4f} (threshold: 1.5)")
+        
+        # Check if we can fallback to online search
+        has_gemini = bool(os.getenv("GEMINI_API_KEY"))
+        has_openai = bool(os.getenv("OPENAI_API_KEY"))
+        can_search_online = has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo"
+        
+        if can_search_online:
+            print("🌐 No relevant documents found - Falling back to ONLINE SEARCH")
+            print(f"   Using search engine: {SEARCH_ENGINE}")
+            print("#"*60)
+            
+            online_response = search_online(query)
+            fallback_note = "\nNote: This information was generated online because we couldn't find it in your uploaded documents.\n\n"
+            return jsonify({"response": fallback_note + online_response})
+        else:
+            print("   • Try using keywords directly (e.g., use 'engineer' instead of 'profession')")
+            print("   • Try asking differently (e.g., 'Tell me about X' instead of 'What is X')")
+            print("   • The semantic embedding might not capture the relationship")
+            print("🔒 Current Mode: OFFLINE - Cannot search online (no API keys configured)")
+            print("#"*60 + "\n")
+            return jsonify({"response": "No relevant information found in uploaded documents. Try rephrasing your question with more specific keywords from the document."})
 
     # Generate answer from local documents
     print("\n" + "*"*60)
-    print("✅ Using information from uploaded documents")
+    print(f"✅ Using information from: {best_file}")
     print("*"*60)
     print("🤖 Generating answer using local LLaMA model...")
     response = generate_answer(context, query)
     print("✅ Answer generated successfully from local documents")
     print("#"*60 + "\n")
     
-    # Add clear indication that this IS from uploaded documents
-    source_indicator = "Source: Your uploaded manual\n\n"
+    # Add clear indication of source file
+    source_indicator = f"Source: {best_file}\n\n"
     response = source_indicator + response
     
     return jsonify({"response": response})
@@ -600,6 +762,97 @@ def toggle():
         "offline_only": OFFLINE_ONLY,
         "message": f"Successfully switched to {mode} mode"
     })
+
+@app.route("/debug/database", methods=["GET"])
+def debug_database():
+    """Diagnostic endpoint to inspect what's stored in the vector database"""
+    try:
+        # Get all documents
+        all_data = collection.get()
+        ids = all_data.get('ids', [])
+        documents = all_data.get('documents', [])
+        
+        print("\n" + "="*60)
+        print("📊 DATABASE DIAGNOSTIC")
+        print("="*60)
+        print(f"Total chunks stored: {len(ids)}")
+        
+        # Group by file
+        files = {}
+        for doc_id, doc in zip(ids, documents):
+            filename = "_".join(doc_id.split("_")[:-1])  # Remove chunk number
+            if filename not in files:
+                files[filename] = []
+            files[filename].append(doc)
+        
+        print(f"Files in database: {len(files)}")
+        for filename, chunks in files.items():
+            print(f"  • {filename}: {len(chunks)} chunks")
+        
+        # Show sample of first few chunks
+        sample_chunks = []
+        for i, (doc_id, doc) in enumerate(zip(ids[:5], documents[:5])):
+            preview = doc[:200].replace('\n', ' ')
+            sample_chunks.append({
+                "id": doc_id,
+                "preview": preview,
+                "length": len(doc)
+            })
+            print(f"\n  Sample chunk {i+1}:")
+            print(f"    ID: {doc_id}")
+            print(f"    Length: {len(doc)} chars")
+            print(f"    Preview: {preview}...")
+        
+        print("="*60 + "\n")
+        
+        return jsonify({
+            "total_chunks": len(ids),
+            "files": {filename: len(chunks) for filename, chunks in files.items()},
+            "sample_chunks": sample_chunks
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/debug/file/<path:filename>", methods=["GET"])
+def debug_file(filename):
+    """Inspect all chunks from a specific file"""
+    try:
+        # Get all documents
+        all_data = collection.get()
+        ids = all_data.get('ids', [])
+        documents = all_data.get('documents', [])
+        
+        # Filter for this specific file
+        file_chunks = []
+        for doc_id, doc in zip(ids, documents):
+            if doc_id.startswith(filename + "_"):
+                file_chunks.append({
+                    "id": doc_id,
+                    "content": doc,
+                    "length": len(doc),
+                    "preview": doc[:300].replace('\n', ' ')
+                })
+        
+        print("\n" + "="*60)
+        print(f"📄 FILE INSPECTION: {filename}")
+        print("="*60)
+        print(f"Found {len(file_chunks)} chunks")
+        for i, chunk in enumerate(file_chunks):
+            print(f"\nChunk {i+1}:")
+            print(f"Length: {chunk['length']} chars")
+            print(f"Preview: {chunk['preview']}...")
+        print("="*60 + "\n")
+        
+        if not file_chunks:
+            return jsonify({"error": f"File '{filename}' not found in database"}), 404
+        
+        return jsonify({
+            "filename": filename,
+            "chunk_count": len(file_chunks),
+            "chunks": file_chunks
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     print("\nStarting Flask server...")

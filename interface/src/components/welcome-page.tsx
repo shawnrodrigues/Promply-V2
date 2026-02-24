@@ -39,6 +39,8 @@ export default function WelcomePage() {
 
   const uploadMultipleFiles = async (files: File[]) => {
     try {
+      const warnings: string[] = [];
+      
       // Upload each file individually to the existing /api/upload endpoint
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -60,10 +62,30 @@ export default function WelcomePage() {
           throw new Error(data.error);
         }
         
+        // Log detailed OCR stats
         console.log(`File ${i + 1}/${files.length} uploaded:`, data.message);
+        if (data.stats) {
+          console.log('📊 Processing stats:', {
+            text: `${data.stats.text_characters} chars`,
+            ocr: `${data.stats.ocr_characters} chars`,
+            images: `${data.stats.images_processed}/${data.stats.images_found} processed`,
+            chunks: data.stats.total_chunks
+          });
+        }
+        
+        // Collect warnings
+        if (data.warning) {
+          warnings.push(`${file.name}: ${data.warning}`);
+        }
       }
       
       console.log('All files uploaded successfully');
+      
+      // Show warnings if any
+      if (warnings.length > 0) {
+        alert('⚠️ Upload completed with warnings:\n\n' + warnings.join('\n\n') + '\n\nThe PDF text was processed, but OCR may have failed. Please check the console for details.');
+      }
+      
       setStep("chat");
     } catch (error) {
       console.error('Upload failed:', error);
