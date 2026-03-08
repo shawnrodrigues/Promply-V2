@@ -6,10 +6,11 @@
 
 #### 🔧 Features to Implement
 - [ ] User authentication system (Login / Register)
-- [ ] Local & online document search modes
+- [x] Local & online document search modes
 - [ ] Settings panel (model choice, theme toggle)
 - [ ] Error handling and fallback behavior
 - [ ] Deployment (Docker)
+- [ ] Handwritting Detection
 
 ---
 

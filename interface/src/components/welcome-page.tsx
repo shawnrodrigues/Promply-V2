@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GalleryVerticalEnd, UploadCloud, Loader2, User, Bot, Plus, Send, Paperclip } from "lucide-react";
@@ -13,6 +13,11 @@ export default function WelcomePage() {
   const [searchStatus, setSearchStatus] = useState<string>("");
   const [isOfflineMode, setIsOfflineMode] = useState(true); // Changed to offline by default as per backend
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chat, aiTyping]);
 
   // Step 1: Homepage with two options
   const handleStartUpload = () => setStep("uploader");
@@ -793,6 +798,7 @@ export default function WelcomePage() {
                   </div>
                 </div>
               )}
+              <div ref={chatEndRef} />
             </div>
             
             <div className="relative p-5 border-t border-cyan-500/20 bg-slate-900/60 backdrop-blur-lg">

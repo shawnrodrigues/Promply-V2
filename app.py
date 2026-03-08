@@ -242,17 +242,15 @@ def format_response(raw_response):
     return '\n'.join(formatted)
 
 def generate_answer(context, question):
-    prompt = f"""You are a helpful AI assistant. Answer the question based on the following document content.
+    prompt = f"""You are a strict document assistant. You ONLY answer using the exact content provided below. You do NOT use any outside knowledge, training data, or assumptions.
 
-IMPORTANT INSTRUCTIONS:
-- Provide a COMPREHENSIVE and DETAILED answer using ALL relevant information from the document
-- Include specific details, examples, features, and explanations found in the context
-- For resume/CV questions: Extract names, titles, education, experience, etc. directly
-- For document questions: Provide exact information without paraphrasing
+RULES:
+- If the answer is clearly present in the document content, provide it in full detail
+- If the answer is NOT found or NOT mentioned in the document content, respond ONLY with: "This information was not found in the uploaded documents."
+- Do NOT guess, infer, or fill in gaps from general knowledge
+- Do NOT make up any information that is not explicitly in the document
 - Use simple dashes (-) for bullet points when listing items
 - Use numbers (1. 2. 3.) for sequential steps or procedures
-- Write clear, informative paragraphs separated by blank lines
-- Start with a direct answer, then provide thorough details
 - Do NOT use special symbols like • or ** or other formatting marks
 - Keep the language professional, clear, and informative
 
@@ -261,7 +259,7 @@ Document Content:
 
 Question: {question}
 
-Answer (provide a thorough, comprehensive, and detailed response using all relevant information):"""
+Answer (ONLY from the document content above, or state not found):"""
 
     try:
         output = llm(prompt, max_tokens=2000, temperature=0.7, stop=["Question:", "Manual Content:"])
@@ -576,10 +574,10 @@ def chat():
     if not has_documents:
         print("❌ No documents uploaded and in OFFLINE mode")
         
-        # Check if we can fallback to online search
+        # Check if we can fallback to online search (only when ONLINE mode is active)
         has_gemini = bool(os.getenv("GEMINI_API_KEY"))
         has_openai = bool(os.getenv("OPENAI_API_KEY"))
-        can_search_online = has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo"
+        can_search_online = (has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo") and not OFFLINE_ONLY
         
         if can_search_online:
             print("🌐 No documents available - Falling back to ONLINE SEARCH")
@@ -591,7 +589,7 @@ def chat():
             return jsonify({"response": fallback_note + online_response})
         else:
             print("#"*60 + "\n")
-            return jsonify({"response": "No documents uploaded. Please upload documents to get started."})
+            return jsonify({"response": "No documents uploaded. Please upload a PDF document to get started."})
 
     # Query the vector database
     print("🔍 Searching in uploaded documents...")
@@ -667,9 +665,9 @@ def chat():
         # Further relaxed threshold from 1.2 to 1.5
         # Semantic search can have high distances for factual queries
         # e.g., "What is X's profession?" vs "X Computer Engineer" = high distance
-        is_relevant = best_distance < 1.5
+        is_relevant = best_distance < 1.0
         print(f"   Best match distance: {best_distance:.4f}")
-        print(f"   Relevance threshold: 1.5 (very relaxed for better recall)")
+        print(f"   Relevance threshold: 1.0")
         print(f"   Result: {'✅ RELEVANT' if is_relevant else '❌ NOT RELEVANT (try rephrasing)'}")
 
     # If not relevant in offline mode
@@ -678,10 +676,10 @@ def chat():
         if distances and len(distances) > 0:
             print(f"   Closest match was {best_distance:.4f} (threshold: 1.5)")
         
-        # Check if we can fallback to online search
+        # Check if we can fallback to online search (only when ONLINE mode is active)
         has_gemini = bool(os.getenv("GEMINI_API_KEY"))
         has_openai = bool(os.getenv("OPENAI_API_KEY"))
-        can_search_online = has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo"
+        can_search_online = (has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo") and not OFFLINE_ONLY
         
         if can_search_online:
             print("🌐 No relevant documents found - Falling back to ONLINE SEARCH")
@@ -695,7 +693,7 @@ def chat():
             print("   • Try using keywords directly (e.g., use 'engineer' instead of 'profession')")
             print("   • Try asking differently (e.g., 'Tell me about X' instead of 'What is X')")
             print("   • The semantic embedding might not capture the relationship")
-            print("🔒 Current Mode: OFFLINE - Cannot search online (no API keys configured)")
+            print("🔒 Current Mode: OFFLINE - Will not search online")
             print("#"*60 + "\n")
             return jsonify({"response": "No relevant information found in uploaded documents. Try rephrasing your question with more specific keywords from the document."})
 
