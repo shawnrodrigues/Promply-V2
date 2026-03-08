@@ -144,7 +144,8 @@ print("Initializing LLaMA with GPU...")
 llm = Llama(
     model_path=MODEL_PATH,
     n_gpu_layers=-1,
-    n_ctx=4096
+    n_ctx=4096,
+    n_batch=512
 )
 
 @app.route("/", methods=["GET"])
@@ -242,27 +243,31 @@ def format_response(raw_response):
     return '\n'.join(formatted)
 
 def generate_answer(context, question):
-    prompt = f"""You are a strict document assistant. You ONLY answer using the exact content provided below. You do NOT use any outside knowledge, training data, or assumptions.
+    prompt = f"""You are a helpful and thorough document assistant. Answer the question using ONLY the document content provided below. Do NOT use outside knowledge.
 
-RULES:
-- If the answer is clearly present in the document content, provide it in full detail
-- If the answer is NOT found or NOT mentioned in the document content, respond ONLY with: "This information was not found in the uploaded documents."
-- Do NOT guess, infer, or fill in gaps from general knowledge
-- Do NOT make up any information that is not explicitly in the document
-- Use simple dashes (-) for bullet points when listing items
-- Use numbers (1. 2. 3.) for sequential steps or procedures
-- Do NOT use special symbols like • or ** or other formatting marks
-- Keep the language professional, clear, and informative
+STRICT RULES:
+- If the answer is clearly present, give a COMPREHENSIVE and DETAILED response using ALL relevant information from the context
+- If the answer is NOT in the document at all, respond only with: "This information was not found in the uploaded documents."
+- Do NOT guess or fill in gaps from general knowledge
+
+FORMATTING RULES:
+- Start with a direct 1-2 sentence summary answer
+- Then expand with full details, examples, and specifics from the document
+- Use dashes (-) for bullet point lists
+- Use numbers (1. 2. 3.) for steps or procedures
+- Separate sections with a blank line for readability
+- Do NOT use symbols like * or # or bold markers
+- Write in clear, professional paragraphs where appropriate
 
 Document Content:
 {context}
 
 Question: {question}
 
-Answer (ONLY from the document content above, or state not found):"""
+Detailed Answer:"""
 
     try:
-        output = llm(prompt, max_tokens=2000, temperature=0.7, stop=["Question:", "Manual Content:"])
+        output = llm(prompt, max_tokens=1500, temperature=0.4, stop=["Question:", "Document Content:"])
         return format_response(output['choices'][0]['text'])
     except Exception as e:
         return f"Error generating answer: {e}"
@@ -597,7 +602,7 @@ def chat():
     # Similarity Search
     results = collection.query(
         query_embeddings=[embed_text(query)],
-        n_results=20  # Increased to 20 to catch more potential matches
+        n_results=12
     )
     print("✅ Vector database search completed")
 
@@ -610,52 +615,42 @@ def chat():
         context = ""
         context_chunks = []
         distances = []
-        best_file = "Unknown"
+        source_files = []
     else:
-        # Group chunks by source file
-        file_groups = {}
-        for chunk_id, chunk, distance in zip(all_ids, all_chunks, all_distances):
-            # Extract filename from chunk ID (format: filename_chunknum)
-            filename = "_".join(chunk_id.split("_")[:-1])
-            if filename not in file_groups:
-                file_groups[filename] = []
-            file_groups[filename].append({
+        # Sort ALL chunks across ALL files purely by relevance distance
+        combined = [
+            {
                 'id': chunk_id,
                 'chunk': chunk,
-                'distance': distance
-            })
-        
-        # Find the file with the best (lowest) average distance in top results
-        file_scores = {}
-        for filename, items in file_groups.items():
-            # Use average of top 3 distances from this file
-            top_distances = sorted([item['distance'] for item in items])[:3]
-            file_scores[filename] = sum(top_distances) / len(top_distances)
-        
-        # Get the best matching file
-        best_file = min(file_scores, key=file_scores.get)
-        best_file_score = file_scores[best_file]
-        
-        print(f"\n📁 File relevance scores (lower = better):")
-        for filename, score in sorted(file_scores.items(), key=lambda x: x[1])[:3]:
-            print(f"   • {filename}: {score:.4f}")
-        print(f"\n✅ Selected file: {best_file}")
-        
-        # Use only chunks from the best matching file
-        selected_items = sorted(file_groups[best_file], key=lambda x: x['distance'])[:5]
-        context_chunks = [item['chunk'] for item in selected_items]
-        distances = [item['distance'] for item in selected_items]
+                'distance': distance,
+                'file': "_".join(chunk_id.split("_")[:-1])
+            }
+            for chunk_id, chunk, distance in zip(all_ids, all_chunks, all_distances)
+        ]
+        combined.sort(key=lambda x: x['distance'])
+
+        # Take top 6 most relevant chunks regardless of which file they come from
+        selected = combined[:6]
+        context_chunks = [item['chunk'] for item in selected]
+        distances = [item['distance'] for item in selected]
         context = "\n\n---\n\n".join(context_chunks)
+
+        # Track all unique source files used
+        source_files = list(dict.fromkeys(item['file'] for item in selected))
+
+        print(f"\n📁 Cross-file chunks selected (top 6 by relevance):")
+        for item in selected:
+            print(f"   • [{item['distance']:.4f}] {item['file']} — {item['chunk'][:80].replace(chr(10), ' ')}...")
 
     # Check relevance
     is_relevant = False
     
     print("\n📊 Analyzing relevance of search results...")
-    print(f"   Found {len(context_chunks)} chunks from selected file")
+    print(f"   Found {len(context_chunks)} chunks from {len(source_files)} file(s)")
     
     # Show previews of top 5 matches with ALL scores
     if context_chunks and distances:
-        print(f"   Top {len(context_chunks)} matches from {best_file}:")
+        print(f"   Top {len(context_chunks)} matches across {len(source_files)} file(s):")
         for i in range(len(context_chunks)):
             preview = context_chunks[i][:150].replace('\n', ' ')
             print(f"   [{i+1}] Distance: {distances[i]:.4f} | Preview: {preview}...")
@@ -699,15 +694,15 @@ def chat():
 
     # Generate answer from local documents
     print("\n" + "*"*60)
-    print(f"✅ Using information from: {best_file}")
+    print(f"✅ Using information from: {', '.join(source_files)}")
     print("*"*60)
     print("🤖 Generating answer using local LLaMA model...")
     response = generate_answer(context, query)
     print("✅ Answer generated successfully from local documents")
     print("#"*60 + "\n")
     
-    # Add clear indication of source file
-    source_indicator = f"Source: {best_file}\n\n"
+    # Show all source files used
+    source_indicator = f"Sources: {', '.join(source_files)}\n\n"
     response = source_indicator + response
     
     return jsonify({"response": response})
