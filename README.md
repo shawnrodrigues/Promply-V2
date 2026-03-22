@@ -15,9 +15,8 @@ Before installing, ensure the following are installed on your system:
 | **Visual Studio Build Tools** | For building Python dependencies |
 | **Tesseract OCR** | Extract text from PDFs/images |
 
-Optional model downloads:  
-📁 [Models (Google Drive Link 1)](https://drive.google.com/drive/folders/1ICX0rQ5p6aZtJb6kw5YfYMc2m7atXvdo?usp=sharing)  
-📁 [Models (Google Drive Link 2)](https://drive.google.com/drive/folders/1pvCsdTdeqOpFGVWut3DPHhPdMHY3fF-P?usp=sharing)
+Optional model downloads:   
+📁 [Models (Google Drive Link 1)](https://drive.google.com/drive/folders/1HOnDhHKFnIaD96kj-8zbLoGCrBK4Pklf?usp=drive_link)
 
 ---
 
