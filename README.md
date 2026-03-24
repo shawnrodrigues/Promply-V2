@@ -120,21 +120,107 @@ http://localhost:5000
 
 ---
 
-## 📸 UI Preview
+## � Evaluation & Metrics (OCR Quality Assessment)
+
+Promply-V2 includes an offline evaluation framework to measure OCR accuracy and extraction quality.
+
+### Quick Start Evaluation
+
+```bash
+python evaluation/run_evaluation.py
+```
+
+This scans all PDFs in `uploads/` and generates an **examiner-ready dashboard**:
+
+```bash
+start evaluation/output/examiner_report_latest.html
+```
+
+### What the Evaluation Shows
+
+| Metric | Description |
+|--------|-------------|
+| **Documents** | Total PDFs processed |
+| **Pages** | Total pages scanned |
+| **Scan Coverage %** | Percentage of documents with scanned (image) content |
+| **Extraction Coverage %** | Percentage of documents with any extractable text |
+| **OCR Success Rate %** | Percentage of scanned images successfully converted to text |
+| **OCR Contribution %** | How much of extracted text came from OCR vs. native PDF |
+| **Answer Accuracy %** | Character Error Rate (when ground truth is provided) |
+| **Processing Time** | Time per document in seconds |
+
+### Enable True Accuracy Metrics (WER/CER)
+
+1. Create `evaluation/input/ground_truth.csv`:
+
+```csv
+file_name,expected_text
+document_01.pdf,"Exact expected transcription here"
+document_02.pdf,"Another document's expected text"
+```
+
+2. Run with ground truth:
+
+```bash
+python evaluation/run_evaluation.py --ground-truth evaluation/input/ground_truth.csv
+```
+
+3. View results:
+
+```bash
+start evaluation/output/examiner_report_latest.html
+```
+
+### Archive Previous Runs
+
+By default, only the latest reports are kept. To also archive timestamped copies:
+
+```bash
+python evaluation/run_evaluation.py --archive
+```
+
+### Tools & Technologies Used
+
+The evaluation framework leverages:
+
+- **pdfminer.six** — PDF text extraction
+- **PyMuPDF (fitz)** — Embedded image extraction from PDFs
+- **Pillow** — Image preprocessing (grayscale, denoise, contrast, threshold)
+- **Tesseract OCR** — Local optical character recognition
+- **Levenshtein Distance** — Accuracy calculation (WER/CER metrics)
+
+All processing is **local and offline** — no external APIs or paid services required.
+
+---
+
+## �📸 UI Preview
 
 ### Project Structure
 ```
 PROMPLY-V2
-├── data/
-├── Images/
-├── interface/
-├── models/
-├── uploads/
-│   └── images/
-├── vector_store/
-├── app.py
-├── requirements.txt
-└── README.md
+├── data/                              # Data storage
+├── Images/                            # UI screenshots
+├── interface/                         # Next.js frontend
+├── models/                            # LLM models (Llama, Mistral)
+├── uploads/                           # User-uploaded PDFs
+│   └── images/                        # Extracted images
+├── vector_store/                      # ChromaDB embeddings
+├── evaluation/                        # OCR Evaluation Kit ⭐ NEW
+│   ├── src/
+│   │   └── run_evaluation.py          # Main evaluation engine
+│   ├── run_evaluation.py              # Launcher script
+│   ├── README.md                      # Evaluation docs
+│   ├── EXAMINER_PACK.md               # Presentation guide
+│   ├── input/
+│   │   └── ground_truth_template.csv  # Ground truth labels (optional)
+│   └── output/
+│       ├── examiner_report_latest.html  # Visual dashboard
+│       ├── examiner_report_latest.md    # Markdown report
+│       ├── metrics_latest.csv           # Raw metrics table
+│       └── summary_latest.json          # KPI summary
+├── app.py                             # Flask backend
+├── requirements.txt                   # Python dependencies
+└── README.md                          # This file
 ```
 
 ![Contents](Images/Contents.png)
