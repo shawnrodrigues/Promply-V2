@@ -7,6 +7,6 @@
   "ocr_contribution_pct": 1.42,
   "answer_accuracy_pct": null,
   "answer_confidence_proxy_pct": 94.0,
-  "total_processing_time_sec": 51.87,
-  "avg_time_per_doc_sec": 3.05
+  "total_processing_time_sec": 50.67,
+  "avg_time_per_doc_sec": 2.98
 }

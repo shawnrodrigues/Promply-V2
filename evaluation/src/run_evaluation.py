@@ -602,6 +602,16 @@ def write_outputs(summary, metrics_list, output_dir):
     html_latest = os.path.join(output_dir, 'examiner_report_latest.html')
     build_html_report(summary, metrics_list, html_latest)
     print(f"✓ HTML Report: {html_latest}")
+
+
+def write_outputs(summary, metrics_list, output_dir):
+    """Write all output files (latest-only by default)."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # HTML report
+    html_latest = os.path.join(output_dir, 'examiner_report_latest.html')
+    build_html_report(summary, metrics_list, html_latest)
+    print(f"✓ HTML Report: {html_latest}")
     
     # Markdown report
     md_latest = os.path.join(output_dir, 'examiner_report_latest.md')
