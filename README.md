@@ -148,6 +148,14 @@ Then open:
 http://localhost:5000
 ```
 
+### One-command launch (backend + interface)
+
+On Windows you can start the Flask API and Next.js UI together via the batch helper:
+
+```bat
+start-stack.bat
+```
+
 ---
 
 ## ⚡ Retrieval Performance Tips
