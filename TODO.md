@@ -8,9 +8,10 @@
 - [ ] User authentication system (Login / Register)
 - [x] Local & online document search modes
 - [ ] Settings panel (model choice, theme toggle)
-- [ ] Error handling and fallback behavior
+- [x] Error handling and fallback behavior
 - [ ] Deployment (Docker)
-- [ ] Handwritting Detection
+- [x] Handwritting Detection
+- [x] Added image recognization and also image support
 
 ---
 
@@ -19,11 +20,14 @@
 - [x] GPU memory usage optimization
 - [x] Offline mode toggle in frontend
 - [x] Enhance UI responsiveness on mobile devices
+- [x] Enhanced answer retrieval
+- [ ] Merging both the applications in one 
 
 ---
 
 #### 📝 Documentation
 - [x] Developer setup guide
+- [x] Updated more things in the read and it is more detailed now
 - [ ] Contribution guidelines
 
 ---
@@ -34,3 +38,4 @@
 - [x] Initial PDF parsing logic
 - [x] Virtual environment instructions
 - [x] Installation instructions (Windows)
+- [x] Added graphs and analysis tools

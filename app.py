@@ -19,6 +19,8 @@ from PIL import Image
 import io
 import google.generativeai as genai
 import platform
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+from functools import lru_cache
 
 # Configure Tesseract for Windows
 if platform.system() == 'Windows':
@@ -44,6 +46,7 @@ load_dotenv()
 UPLOAD_FOLDER = 'uploads'
 IMAGE_FOLDER = 'uploads/images'
 VECTORDB_FOLDER = 'vector_store'
+ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp', '.gif'}
 
 MODEL_PATH = "models/mistral-7b-instruct-v0.2.Q5_K_M.gguf"
 
@@ -73,6 +76,31 @@ except Exception as e:
 
 OFFLINE_ONLY = True
 SEARCH_ENGINE = "gemini"  # Changed from duckduckgo to gemini for better reliability
+ENABLE_HANDWRITING_OCR = True
+SOURCE_LOCK_ENABLED = False
+SOURCE_LOCK_FILE = os.getenv("SOURCE_LOCK_FILE", "").strip()
+LAST_UPLOADED_FILE = ""
+HANDWRITING_SOURCE_FILES = {}
+FAST_RESULT_LIMIT = 6
+FULL_RESULT_LIMIT = 12
+QUERY_EMBED_CACHE_SIZE = 64
+
+trocr_processor = None
+trocr_model = None
+trocr_device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Load TrOCR handwritten model (optional, offline-first).
+if ENABLE_HANDWRITING_OCR:
+    try:
+        trocr_model_name = "microsoft/trocr-base-handwritten"
+        trocr_processor = TrOCRProcessor.from_pretrained(trocr_model_name)
+        trocr_model = VisionEncoderDecoderModel.from_pretrained(trocr_model_name).to(trocr_device)
+        trocr_model.eval()
+        print(f"✓ Handwriting OCR enabled with TrOCR on: {trocr_device}")
+    except Exception as e:
+        ENABLE_HANDWRITING_OCR = False
+        print(f"⚠ Handwriting OCR unavailable: {e}")
+        print("  Continuing with Tesseract OCR only.")
 
 print("=" * 60)
 print("PROMPTLY STARTING...")
@@ -83,8 +111,47 @@ print("=" * 60)
 def embed_text(text):
     return embed_model.encode([text])[0]
 
+@lru_cache(maxsize=QUERY_EMBED_CACHE_SIZE)
+def _cached_query_embedding(text):
+    return embed_model.encode([text])[0]
+
+def get_query_embedding(text):
+    return _cached_query_embedding(text)
+
 def parse_pdf_text(path):
     return extract_text(path)
+
+def ocr_with_trocr(image):
+    """Run handwritten OCR on a PIL image with TrOCR."""
+    if not ENABLE_HANDWRITING_OCR or trocr_processor is None or trocr_model is None:
+        return ""
+
+    try:
+        rgb_image = image.convert("RGB")
+        pixel_values = trocr_processor(images=rgb_image, return_tensors="pt").pixel_values.to(trocr_device)
+        generated_ids = trocr_model.generate(pixel_values)
+        text = trocr_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        return text.strip()
+    except Exception as e:
+        print(f"  ⚠ TrOCR failed: {e}")
+        return ""
+
+def run_ocr_pipeline_on_image(image):
+    text = pytesseract.image_to_string(image)
+    handwriting_hit = False
+
+    if ENABLE_HANDWRITING_OCR:
+        trocr_text = ocr_with_trocr(image)
+        if trocr_text:
+            if text.strip():
+                if trocr_text.lower() not in text.lower():
+                    text = (text + "\n" + trocr_text).strip()
+                    handwriting_hit = True
+            else:
+                text = trocr_text
+                handwriting_hit = True
+
+    return text, handwriting_hit
 
 def extract_images_and_ocr(pdf_path):
     """Extract images from PDF and perform OCR with proper error handling."""
@@ -92,6 +159,7 @@ def extract_images_and_ocr(pdf_path):
     image_texts = []
     total_images = 0
     successful_ocr = 0
+    handwriting_successful_ocr = 0
     
     try:
         for page_number in range(len(doc)):
@@ -105,9 +173,10 @@ def extract_images_and_ocr(pdf_path):
                     base_image = doc.extract_image(xref)
                     image_bytes = base_image["image"]
                     image = Image.open(io.BytesIO(image_bytes))
-                    
-                    # Perform OCR
-                    text = pytesseract.image_to_string(image)
+
+                    text, handwriting_hit = run_ocr_pipeline_on_image(image)
+                    if handwriting_hit:
+                        handwriting_successful_ocr += 1
                     if text.strip():  # Only add non-empty text
                         image_texts.append(text)
                         successful_ocr += 1
@@ -115,14 +184,49 @@ def extract_images_and_ocr(pdf_path):
                     print(f"  ⚠ OCR failed for image on page {page_number + 1}: {str(img_error)}")
                     continue
         
-        print(f"  📊 OCR Stats: {total_images} images found, {successful_ocr} successfully processed")
+        print(
+            f"  📊 OCR Stats: {total_images} images found, {successful_ocr} successfully processed"
+            f" (handwriting hits: {handwriting_successful_ocr})"
+        )
         if total_images > 0 and successful_ocr == 0:
             print("  ⚠ WARNING: No text extracted from images. Check Tesseract installation.")
         
-        return {"text": "\n".join(image_texts), "images_found": total_images, "images_processed": successful_ocr}
+        return {
+            "text": "\n".join(image_texts),
+            "images_found": total_images,
+            "images_processed": successful_ocr,
+            "handwriting_images_processed": handwriting_successful_ocr,
+        }
     except Exception as e:
         print(f"  ❌ OCR Error: {str(e)}")
-        return {"text": "", "images_found": 0, "images_processed": 0, "error": str(e)}
+        return {
+            "text": "",
+            "images_found": 0,
+            "images_processed": 0,
+            "handwriting_images_processed": 0,
+            "error": str(e),
+        }
+
+def process_image_file(image_path):
+    try:
+        image = Image.open(image_path)
+        text, handwriting_hit = run_ocr_pipeline_on_image(image)
+        processed = 1 if text.strip() else 0
+        return {
+            "text": text,
+            "images_found": 1,
+            "images_processed": processed,
+            "handwriting_images_processed": 1 if handwriting_hit else 0,
+        }
+    except Exception as e:
+        print(f"  ❌ Image OCR Error: {str(e)}")
+        return {
+            "text": "",
+            "images_found": 1,
+            "images_processed": 0,
+            "handwriting_images_processed": 0,
+            "error": str(e),
+        }
 
 chroma_client = chromadb.PersistentClient(path=VECTORDB_FOLDER)
 
@@ -154,33 +258,76 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    file = request.files.get("pdf")
+    global LAST_UPLOADED_FILE, SOURCE_LOCK_FILE, HANDWRITING_SOURCE_FILES
+
+    file = request.files.get("pdf") or request.files.get("file")
     if not file:
         return jsonify({"status": "error", "message": "No file uploaded"})
-    
-    print(f"Processing upload: {file.filename}")
-    path = os.path.join(UPLOAD_FOLDER, file.filename)
+
+    filename = file.filename or ""
+    if not filename:
+        return jsonify({"status": "error", "message": "Uploaded file is missing a valid name"})
+
+    ext = os.path.splitext(filename)[1].lower()
+    is_pdf = ext == ".pdf"
+    is_image = ext in ALLOWED_IMAGE_EXTENSIONS
+
+    if not is_pdf and not is_image:
+        return jsonify({
+            "status": "error",
+            "message": "Unsupported file type. Upload a PDF or one of: " + ", ".join(sorted(ALLOWED_IMAGE_EXTENSIONS))
+        })
+
+    save_dir = UPLOAD_FOLDER if is_pdf else IMAGE_FOLDER
+    os.makedirs(save_dir, exist_ok=True)
+    path = os.path.join(save_dir, filename)
+
+    print(f"Processing upload: {filename} ({'PDF' if is_pdf else 'Image'})")
     file.save(path)
 
-    # Extract text from PDF
-    print("  📄 Extracting text from PDF...")
-    text = parse_pdf_text(path)
-    text_length = len(text.strip())
-    print(f"  ✓ Extracted {text_length} characters of text")
-    
-    # Extract images and perform OCR
-    print("  🖼️ Extracting images and performing OCR...")
-    ocr_result = extract_images_and_ocr(path)
-    image_text = ocr_result.get("text", "")
-    ocr_length = len(image_text.strip())
-    print(f"  ✓ Extracted {ocr_length} characters from OCR")
-    
-    # Show preview of OCR text if any
-    if ocr_length > 0:
-        preview = image_text[:200].replace('\n', ' ').strip()
-        print(f"  📋 OCR Preview: {preview}...")
-    
-    combined_text = text + "\n" + image_text
+    combined_text = ""
+    pdf_text = ""
+    text_length = 0
+    ocr_length = 0
+    ocr_result = {"text": "", "images_found": 0, "images_processed": 0, "handwriting_images_processed": 0}
+
+    if is_pdf:
+        print("  📄 Extracting text from PDF...")
+        pdf_text = parse_pdf_text(path) or ""
+        text_length = len(pdf_text.strip())
+        print(f"  ✓ Extracted {text_length} characters of text")
+
+        print("  🖼️ Extracting images and performing OCR...")
+        ocr_result = extract_images_and_ocr(path)
+        image_text = ocr_result.get("text", "")
+        ocr_length = len(image_text.strip())
+        print(f"  ✓ Extracted {ocr_length} characters from OCR")
+
+        if ocr_length > 0:
+            preview = image_text[:200].replace('\n', ' ').strip()
+            print(f"  📋 OCR Preview: {preview}...")
+
+        if pdf_text and image_text:
+            combined_text = pdf_text + "\n" + image_text
+        else:
+            combined_text = pdf_text or image_text
+    else:
+        print("  🖼️ Running OCR on uploaded image...")
+        ocr_result = process_image_file(path)
+        combined_text = ocr_result.get("text", "")
+        text_length = len(combined_text.strip())
+        ocr_length = text_length
+        if text_length > 0:
+            preview = combined_text[:200].replace('\n', ' ').strip()
+            print(f"  📋 OCR Preview: {preview}...")
+        else:
+            print("  ⚠ No text extracted from the uploaded image.")
+
+    if not combined_text.strip():
+        message = "No text could be extracted from the uploaded file. Ensure the content is clear and try again."
+        if ocr_result.get("error"):
+            message += f" Details: {ocr_result['error']}"
+        return jsonify({"status": "error", "message": message})
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -188,37 +335,56 @@ def upload():
     )
     chunks = text_splitter.split_text(combined_text)
 
-    print(f"PDF split into {len(chunks)} chunks. Adding to vector DB...")
+    file_has_handwriting = ocr_result.get("handwriting_images_processed", 0) > 0
+    HANDWRITING_SOURCE_FILES[filename] = file_has_handwriting
+
+    doc_label = "PDF" if is_pdf else "Image"
+    print(f"{doc_label} split into {len(chunks)} chunk(s). Adding to vector DB...")
     for idx, chunk in tqdm(enumerate(chunks), total=len(chunks), desc="Processing chunks"):
-        # Store in Vector Database
         collection.add(
             documents=[chunk],
             embeddings=[embed_text(chunk)],
-            ids=[f"{file.filename}_{idx}"]
+            ids=[f"{filename}_{idx}"],
+            metadatas=[{
+                "source_file": filename,
+                "chunk_index": idx,
+                "handwriting_source": file_has_handwriting
+            }]
         )
-    
-    print(f"Upload complete: {file.filename}")
-    
-    # Prepare detailed response
+
+    LAST_UPLOADED_FILE = filename
+    if SOURCE_LOCK_ENABLED and not SOURCE_LOCK_FILE:
+        SOURCE_LOCK_FILE = filename
+
+    print(f"Upload complete: {filename}")
+
     response_data = {
         "status": "success",
-        "message": "PDF uploaded and processed",
+        "message": f"{doc_label} uploaded and processed",
         "mode": "offline" if OFFLINE_ONLY else "online",
+        "file_type": doc_label.lower(),
         "stats": {
             "text_characters": text_length,
             "ocr_characters": ocr_length,
             "images_found": ocr_result.get("images_found", 0),
             "images_processed": ocr_result.get("images_processed", 0),
+            "handwriting_images_processed": ocr_result.get("handwriting_images_processed", 0),
             "total_chunks": len(chunks)
+        },
+        "source_lock": {
+            "enabled": SOURCE_LOCK_ENABLED,
+            "active_file": get_effective_source_file()
+        },
+        "handwriting": {
+            "file_contains_handwriting_ocr": file_has_handwriting
         }
     }
-    
-    # Add warning if OCR failed
+
     if ocr_result.get("error"):
         response_data["warning"] = f"OCR Error: {ocr_result['error']}"
     elif ocr_result.get("images_found", 0) > 0 and ocr_result.get("images_processed", 0) == 0:
         response_data["warning"] = "Images found but OCR failed. Check Tesseract installation."
-    
+
     return jsonify(response_data)
 
 def format_response(raw_response):
@@ -249,6 +415,8 @@ STRICT RULES:
 - If the answer is clearly present, give a COMPREHENSIVE and DETAILED response using ALL relevant information from the context
 - If the answer is NOT in the document at all, respond only with: "This information was not found in the uploaded documents."
 - Do NOT guess or fill in gaps from general knowledge
+- Never add "additional information" about topics that were not requested. If the user asks about Ruby, do NOT mention Python unless the user explicitly asked you to compare them or the context makes the comparison mandatory for understanding.
+- Ignore any context sentences that discuss unrelated technologies, people, or topics. Only include material that directly answers the user question.
 
 FORMATTING RULES:
 - Start with a direct 1-2 sentence summary answer
@@ -272,7 +440,42 @@ Detailed Answer:"""
     except Exception as e:
         return f"Error generating answer: {e}"
 
+def get_effective_source_file():
+    """Returns the active single-source file when source lock is enabled."""
+    if not SOURCE_LOCK_ENABLED:
+        return ""
+    if SOURCE_LOCK_FILE:
+        return SOURCE_LOCK_FILE
+    if LAST_UPLOADED_FILE:
+        return LAST_UPLOADED_FILE
+
+    # Backward-compatible fallback for older chunks without metadata.
+    try:
+        all_ids = collection.get(ids=None).get("ids", [])
+        if not all_ids:
+            return ""
+
+        files = []
+        seen = set()
+        for chunk_id in all_ids:
+            filename = "_".join(chunk_id.split("_")[:-1])
+            if filename and filename not in seen:
+                files.append(filename)
+                seen.add(filename)
+
+        for filename in files:
+            if "intro to go" in filename.lower():
+                return filename
+
+        return files[-1] if files else ""
+    except Exception:
+        return ""
+
 def search_online(query):
+    if OFFLINE_ONLY:
+        print("🔒 ONLINE SEARCH BLOCKED: OFFLINE mode is enabled")
+        return "Online search is disabled while OFFLINE mode is enabled."
+
     print("\n" + "="*60)
     print(f"🌐 ONLINE SEARCH INITIATED")
     print(f"Search Engine: {SEARCH_ENGINE.upper()}")
@@ -558,6 +761,7 @@ def chat():
     print(f"Query: {query}")
     print("#"*60)
     print(f"🔧 Current Mode: {'OFFLINE' if OFFLINE_ONLY else 'ONLINE'}")
+    active_source_file = get_effective_source_file()
 
     # If ONLINE mode is enabled, search the web directly
     if not OFFLINE_ONLY:
@@ -578,75 +782,110 @@ def chat():
     # If no documents and offline mode
     if not has_documents:
         print("❌ No documents uploaded and in OFFLINE mode")
-        
-        # Check if we can fallback to online search (only when ONLINE mode is active)
-        has_gemini = bool(os.getenv("GEMINI_API_KEY"))
-        has_openai = bool(os.getenv("OPENAI_API_KEY"))
-        can_search_online = (has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo") and not OFFLINE_ONLY
-        
-        if can_search_online:
-            print("🌐 No documents available - Falling back to ONLINE SEARCH")
-            print(f"   Using search engine: {SEARCH_ENGINE}")
-            print("#"*60)
-            
-            online_response = search_online(query)
-            fallback_note = "\nNote: No documents were uploaded, so this information was generated from online sources.\n\n"
-            return jsonify({"response": fallback_note + online_response})
-        else:
-            print("#"*60 + "\n")
-            return jsonify({"response": "No documents uploaded. Please upload a PDF document to get started."})
+        print("#"*60 + "\n")
+        return jsonify({"response": "No documents uploaded. Please upload a PDF document to get started."})
 
     # Query the vector database
     print("🔍 Searching in uploaded documents...")
     print("⏳ Generating query embedding...")
-    # Similarity Search
-    results = collection.query(
-        query_embeddings=[embed_text(query)],
-        n_results=12
-    )
-    print("✅ Vector database search completed")
+    if SOURCE_LOCK_ENABLED and active_source_file:
+        print(f"📌 Source lock active: {active_source_file}")
 
-    # Get all results
-    all_chunks = results.get("documents", [[]])[0] if results.get("documents") else []
-    all_ids = results.get("ids", [[]])[0] if results.get("ids") else []
-    all_distances = results.get('distances', [[]])[0] if results.get('distances') else []
-    
-    if not all_chunks:
-        context = ""
-        context_chunks = []
-        distances = []
-        source_files = []
-    else:
-        # Sort ALL chunks across ALL files purely by relevance distance
+    where_filter = {"source_file": active_source_file} if SOURCE_LOCK_ENABLED and active_source_file else None
+    query_embedding = get_query_embedding(query)
+
+    def run_vector_search(limit):
+        kwargs = {
+            "query_embeddings": [query_embedding],
+            "n_results": limit,
+            "include": ["documents", "distances", "metadatas"]
+        }
+        if where_filter:
+            kwargs["where"] = where_filter
+        return collection.query(**kwargs)
+
+    def process_results(results, limit):
+        docs = results.get("documents", [[]])[0] if results.get("documents") else []
+        ids = results.get("ids", [[]])[0] if results.get("ids") else []
+        distances = results.get("distances", [[]])[0] if results.get("distances") else []
+        metadatas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
+
+        if not docs:
+            return {
+                "context": "",
+                "context_chunks": [],
+                "distances": [],
+                "source_files": [],
+                "handwriting_source_files": [],
+                "best_distance": None
+            }
+
         combined = [
             {
                 'id': chunk_id,
                 'chunk': chunk,
                 'distance': distance,
-                'file': "_".join(chunk_id.split("_")[:-1])
+                'file': (metadata.get('source_file') if isinstance(metadata, dict) and metadata.get('source_file') else "_".join(chunk_id.split("_")[:-1])),
+                'handwriting_source': bool(metadata.get('handwriting_source')) if isinstance(metadata, dict) else False
             }
-            for chunk_id, chunk, distance in zip(all_ids, all_chunks, all_distances)
+            for chunk_id, chunk, distance, metadata in zip(ids, docs, distances, metadatas)
         ]
         combined.sort(key=lambda x: x['distance'])
 
-        # Take top 6 most relevant chunks regardless of which file they come from
-        selected = combined[:6]
+        selected = combined[:limit]
         context_chunks = [item['chunk'] for item in selected]
-        distances = [item['distance'] for item in selected]
+        selected_distances = [item['distance'] for item in selected]
         context = "\n\n---\n\n".join(context_chunks)
-
-        # Track all unique source files used
         source_files = list(dict.fromkeys(item['file'] for item in selected))
+        handwriting_files = list(dict.fromkeys(item['file'] for item in selected if item.get('handwriting_source')))
 
-        print(f"\n📁 Cross-file chunks selected (top 6 by relevance):")
+        print(f"\n📁 Selected chunks (top {len(selected)} by relevance):")
         for item in selected:
-            print(f"   • [{item['distance']:.4f}] {item['file']} — {item['chunk'][:80].replace(chr(10), ' ')}...")
+            source_type = "handwriting" if item.get('handwriting_source') else "standard"
+            print(f"   • [{item['distance']:.4f}] {item['file']} ({source_type}) — {item['chunk'][:80].replace(chr(10), ' ')}...")
+
+        best_distance = min(selected_distances) if selected_distances else None
+
+        return {
+            "context": context,
+            "context_chunks": context_chunks,
+            "distances": selected_distances,
+            "source_files": source_files,
+            "handwriting_source_files": handwriting_files,
+            "best_distance": best_distance,
+            "selected_count": len(selected)
+        }
+
+    print(f"⚡ Running fast vector search (top {FAST_RESULT_LIMIT})")
+    results = run_vector_search(FAST_RESULT_LIMIT)
+    payload = process_results(results, FAST_RESULT_LIMIT)
+
+    needs_expansion = (
+        FULL_RESULT_LIMIT > FAST_RESULT_LIMIT and (
+            len(payload["context_chunks"]) < 3 or
+            (payload["best_distance"] is not None and payload["best_distance"] > 0.85)
+        )
+    )
+
+    if needs_expansion:
+        print(f"⚡ Sparse results, expanding to top {FULL_RESULT_LIMIT} chunks...")
+        results = run_vector_search(FULL_RESULT_LIMIT)
+        payload = process_results(results, FULL_RESULT_LIMIT)
+
+    context = payload["context"]
+    context_chunks = payload["context_chunks"]
+    distances = payload["distances"]
+    source_files = payload["source_files"]
+    handwriting_source_files = payload["handwriting_source_files"]
+    best_distance = payload["best_distance"]
 
     # Check relevance
     is_relevant = False
     
     print("\n📊 Analyzing relevance of search results...")
     print(f"   Found {len(context_chunks)} chunks from {len(source_files)} file(s)")
+    if SOURCE_LOCK_ENABLED and active_source_file:
+        print(f"   Source lock file: {active_source_file}")
     
     # Show previews of top 5 matches with ALL scores
     if context_chunks and distances:
@@ -670,27 +909,15 @@ def chat():
         print("\n❌ No relevant information found in uploaded documents")
         if distances and len(distances) > 0:
             print(f"   Closest match was {best_distance:.4f} (threshold: 1.5)")
-        
-        # Check if we can fallback to online search (only when ONLINE mode is active)
-        has_gemini = bool(os.getenv("GEMINI_API_KEY"))
-        has_openai = bool(os.getenv("OPENAI_API_KEY"))
-        can_search_online = (has_gemini or has_openai or SEARCH_ENGINE == "duckduckgo") and not OFFLINE_ONLY
-        
-        if can_search_online:
-            print("🌐 No relevant documents found - Falling back to ONLINE SEARCH")
-            print(f"   Using search engine: {SEARCH_ENGINE}")
-            print("#"*60)
-            
-            online_response = search_online(query)
-            fallback_note = "\nNote: This information was generated online because we couldn't find it in your uploaded documents.\n\n"
-            return jsonify({"response": fallback_note + online_response})
-        else:
-            print("   • Try using keywords directly (e.g., use 'engineer' instead of 'profession')")
-            print("   • Try asking differently (e.g., 'Tell me about X' instead of 'What is X')")
-            print("   • The semantic embedding might not capture the relationship")
-            print("🔒 Current Mode: OFFLINE - Will not search online")
-            print("#"*60 + "\n")
-            return jsonify({"response": "No relevant information found in uploaded documents. Try rephrasing your question with more specific keywords from the document."})
+
+        print("   • Try using keywords directly (e.g., use 'engineer' instead of 'profession')")
+        print("   • Try asking differently (e.g., 'Tell me about X' instead of 'What is X')")
+        print("   • The semantic embedding might not capture the relationship")
+        print("🔒 Current Mode: OFFLINE - Will not search online")
+        print("#"*60 + "\n")
+        if SOURCE_LOCK_ENABLED and active_source_file:
+            return jsonify({"response": f"No relevant information found in '{active_source_file}'. Try rephrasing your question with more specific keywords from that file."})
+        return jsonify({"response": "No relevant information found in uploaded documents. Try rephrasing your question with more specific keywords from the document."})
 
     # Generate answer from local documents
     print("\n" + "*"*60)
@@ -702,7 +929,16 @@ def chat():
     print("#"*60 + "\n")
     
     # Show all source files used
-    source_indicator = f"Sources: {', '.join(source_files)}\n\n"
+    if source_files:
+        source_labels = []
+        for source_file in source_files:
+            if source_file in handwriting_source_files:
+                source_labels.append(f"{source_file} [handwritten OCR]")
+            else:
+                source_labels.append(source_file)
+        source_indicator = f"Sources: {', '.join(source_labels)}\n\n"
+    else:
+        source_indicator = "Sources: none\n\n"
     response = source_indicator + response
     
     return jsonify({"response": response})
@@ -718,7 +954,32 @@ def status():
         "offline_only": OFFLINE_ONLY,
         "collection_documents": count,
         "mode": "offline" if OFFLINE_ONLY else "online",
-        "search_engine": SEARCH_ENGINE
+        "search_engine": SEARCH_ENGINE,
+        "handwriting_ocr_enabled": ENABLE_HANDWRITING_OCR,
+        "source_lock_enabled": SOURCE_LOCK_ENABLED,
+        "source_lock_file": get_effective_source_file(),
+        "last_uploaded_file": LAST_UPLOADED_FILE
+    })
+
+@app.route("/set-source-file", methods=["POST"])
+def set_source_file():
+    global SOURCE_LOCK_FILE
+
+    source_file = request.json.get("source_file", "").strip()
+    SOURCE_LOCK_FILE = source_file
+
+    if SOURCE_LOCK_FILE:
+        print(f"Source lock file set to: {SOURCE_LOCK_FILE}")
+        message = f"Source lock file set to {SOURCE_LOCK_FILE}"
+    else:
+        print("Source lock file cleared (will use latest upload when available)")
+        message = "Source lock file cleared"
+
+    return jsonify({
+        "status": "ok",
+        "source_lock_enabled": SOURCE_LOCK_ENABLED,
+        "source_lock_file": get_effective_source_file(),
+        "message": message
     })
 
 @app.route("/set-search-engine", methods=["POST"])

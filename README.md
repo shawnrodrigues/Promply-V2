@@ -2,6 +2,15 @@
 
 Promply-V2 is an AI-powered document search and OCR application, supporting NVIDIA GPU acceleration, vector search, and the latest LLM APIs.
 
+## 🔑 Key Capabilities
+
+- **Offline-first QA** — Embeddings, retrieval, and local LLaMA inference all run without internet access; online search requests are blocked unless you opt in.
+- **Hybrid web search** — When you switch to online mode you can route lookups through DuckDuckGo, Gemini, or OpenAI.
+- **Handwriting OCR (TrOCR)** — Printed text still runs through Tesseract, while handwritten regions are processed via Microsoft TrOCR and marked as `[handwritten OCR]` in responses.
+- **Direct image ingestion** — Upload PNG/JPG/BMP/WebP screenshots or scans in the same endpoint as PDFs; they are OCR’d, chunked, and pushed into the vector store automatically.
+- **Fast retrieval pipeline** — Cached query embeddings plus a two-stage vector search (fast 6-chunk pass with optional expansion to 12) keep answers accurate while lowering latency.
+- **Evaluation toolkit** — Built-in examiner report quantifies OCR coverage, image contribution, and processing time for each document.
+
 ---
 
 ## ✅ Prerequisites
@@ -88,6 +97,27 @@ tesseract --version
 
 ---
 
+## ✍️ Handwriting OCR (TrOCR) Setup
+
+Handwriting OCR is optional but recommended when you upload scanned notes or forms.
+
+1. Leave `TRANSFORMERS_OFFLINE=1` enabled (already set in `app.py`) so downloads never happen at runtime.
+2. Start the app once while online so `microsoft/trocr-base-handwritten` can be cached locally by `transformers`.
+3. After the first download, the server seamlessly runs both pipelines offline and labels any chat answer that used `[handwritten OCR]` sources.
+
+To disable handwriting OCR (for example on low-VRAM GPUs), set `ENABLE_HANDWRITING_OCR = False` near the top of `app.py`.
+
+---
+
+## 🖼 Supported Upload Formats
+
+- **PDF** (`.pdf`)
+- **Images** (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.tif`, `.tiff`, `.webp`, `.gif`)
+
+Use the same upload endpoint/UI for both PDFs and images—the backend auto-detects the extension, routes images through OCR, and tags handwritten matches the same way.
+
+---
+
 ## 🔑 Environment Variables
 
 Create a file named `.env` in the project root:
@@ -117,6 +147,14 @@ Then open:
 ```
 http://localhost:5000
 ```
+
+---
+
+## ⚡ Retrieval Performance Tips
+
+- **Fast vs. full search:** `FAST_RESULT_LIMIT` (default 6) keeps latency low. The server only expands to `FULL_RESULT_LIMIT` (default 12) if the first pass lacks confidence.
+- **Embedding cache:** The LRU cache (`QUERY_EMBED_CACHE_SIZE`) prevents recomputing embeddings for repeated prompts. Increase it if your workload reuses the same questions.
+- **Console noise:** Chunk preview logs are helpful for debugging but slower on Windows terminals. Comment them out or wrap them in a debug flag for production runs.
 
 ---
 
@@ -190,6 +228,19 @@ The evaluation framework leverages:
 - **Levenshtein Distance** — Accuracy calculation (WER/CER metrics)
 
 All processing is **local and offline** — no external APIs or paid services required.
+
+---
+
+## 🛰 Runtime Controls & Status
+
+Use these JSON endpoints to automate deployments or quickly inspect the backend state:
+
+- `POST /toggle` — Switch between offline-only and online-enabled modes.
+- `POST /set-search-engine` — Select `duckduckgo`, `gemini`, or `openai` for online fallback.
+- `POST /set-source-file` — Lock retrieval to a single document when auditing answers.
+- `GET /status` — Returns mode, search engine, document counts, and OCR toggles so you can monitor health.
+
+Every chat answer begins with a `Sources:` line. When handwriting chunks were involved the relevant file is marked with `[handwritten OCR]` for easy tracing.
 
 ---
 

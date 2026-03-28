@@ -3,9 +3,43 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GalleryVerticalEnd, UploadCloud, Loader2, User, Bot, Plus, Send, Paperclip } from "lucide-react";
 
+const ACCEPTED_FILE_EXTENSIONS = [
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".bmp",
+  ".tif",
+  ".tiff",
+  ".webp",
+  ".gif",
+];
+
+const ACCEPTED_FILE_LABEL = "PDF or image files (PNG, JPG, JPEG, BMP, TIFF, WEBP, GIF)";
+const ACCEPTED_FILE_ACCEPT = ACCEPTED_FILE_EXTENSIONS.join(",");
+
+const isSupportedFile = (file: File) => {
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  return ext ? ACCEPTED_FILE_EXTENSIONS.includes(`.${ext}`) : false;
+};
+
+const splitFilesBySupport = (files: File[]) => {
+  return files.reduce(
+    (acc, file) => {
+      if (isSupportedFile(file)) {
+        acc.supported.push(file);
+      } else {
+        acc.rejected.push(file.name || "Unnamed file");
+      }
+      return acc;
+    },
+    { supported: [] as File[], rejected: [] as string[] }
+  );
+};
+
 export default function WelcomePage() {
   const [step, setStep] = useState<"home" | "uploader" | "scanning" | "chat">("home");
-  const [pdfFiles, setPdfFiles] = useState<File[]>([]); // Changed from single file to array
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]); // Track any supported upload set
   const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({});
   const [chat, setChat] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [input, setInput] = useState("");
@@ -24,22 +58,36 @@ export default function WelcomePage() {
   const handleStartDirectChat = () => setStep("chat");
   const handleGoHome = () => {
     setStep("home");
-    setPdfFiles([]); // Changed from setPdfFile(null)
+    setUploadedFiles([]);
     setUploadProgress({});
     setChat([]);
     setInput("");
   };
 
-  // Step 2: Real PDF upload to backend - modified for multiple files
+  // Step 2: Real file upload to backend - modified for multiple files
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const files = Array.from(e.target.files);
-      setPdfFiles(files);
-      setStep("scanning");
-      
-      // Upload files one by one to existing endpoint
-      await uploadMultipleFiles(files);
+    if (!e.target.files || e.target.files.length === 0) {
+      return;
     }
+
+    const incomingFiles = Array.from(e.target.files);
+    const { supported, rejected } = splitFilesBySupport(incomingFiles);
+
+    if (rejected.length > 0) {
+      alert(
+        `Some files were skipped because they are not supported:\n\n${rejected.join("\n")}\n\nSupported formats: ${ACCEPTED_FILE_LABEL}.`
+      );
+    }
+
+    if (supported.length === 0) {
+      return;
+    }
+
+    setUploadedFiles(supported);
+    setStep("scanning");
+
+    // Upload files one by one to existing endpoint
+    await uploadMultipleFiles(supported);
   };
 
   const uploadMultipleFiles = async (files: File[]) => {
@@ -88,7 +136,7 @@ export default function WelcomePage() {
       
       // Show warnings if any
       if (warnings.length > 0) {
-        alert('⚠️ Upload completed with warnings:\n\n' + warnings.join('\n\n') + '\n\nThe PDF text was processed, but OCR may have failed. Please check the console for details.');
+        alert('⚠️ Upload completed with warnings:\n\n' + warnings.join('\n\n') + '\n\nThe file text was processed, but OCR may have failed. Please check the console for details.');
       }
       
       setStep("chat");
@@ -101,19 +149,27 @@ export default function WelcomePage() {
 
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files).filter(file => file.type === 'application/pdf');
-      
-      if (files.length === 0) {
-        alert('Please upload only PDF files');
-        return;
-      }
-      
-      setPdfFiles(files);
-      setStep("scanning");
-      
-      await uploadMultipleFiles(files);
+    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) {
+      return;
     }
+
+    const incomingFiles = Array.from(e.dataTransfer.files);
+    const { supported, rejected } = splitFilesBySupport(incomingFiles);
+
+    if (rejected.length > 0) {
+      alert(
+        `Some files were skipped because they are not supported:\n\n${rejected.join("\n")}\n\nSupported formats: ${ACCEPTED_FILE_LABEL}.`
+      );
+    }
+
+    if (supported.length === 0) {
+      return;
+    }
+
+    setUploadedFiles(supported);
+    setStep("scanning");
+
+    await uploadMultipleFiles(supported);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -558,7 +614,7 @@ export default function WelcomePage() {
                       <UploadCloud className="w-5 h-5 text-blue-400" />
                     </div>
                     <h3 className="text-base font-semibold text-slate-100">Document Analysis</h3>
-                    <p className="text-xs text-slate-500 leading-relaxed">Upload and analyze PDFs</p>
+                    <p className="text-xs text-slate-500 leading-relaxed">Upload and analyze PDFs & images</p>
                   </div>
                 </div>
                 
@@ -625,12 +681,12 @@ export default function WelcomePage() {
                 <UploadCloud className="w-10 h-10 text-blue-400 group-hover:animate-bounce" />
               </div>
               <div className="text-center space-y-4">
-                <h2 className="text-3xl font-semibold text-slate-100">Upload your document</h2>
-                <p className="text-slate-300 text-lg">Drag and drop your PDF file here, or click to browse</p>
+                <h2 className="text-3xl font-semibold text-slate-100">Upload your document or image</h2>
+                <p className="text-slate-300 text-lg">Drag and drop any supported PDF or image, or click to browse</p>
                 <div className="flex items-center justify-center gap-6 text-sm text-slate-500 mt-6">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-emerald-400 rounded-full"></div>
-                    <span>PDF Support</span>
+                    <span>PDF & image support</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
@@ -646,7 +702,7 @@ export default function WelcomePage() {
                 ref={fileInputRef}
                 id="pdf"
                 type="file"
-                accept="application/pdf"
+                accept={ACCEPTED_FILE_ACCEPT}
                 multiple // Added multiple attribute
                 onChange={handleFileChange}
                 className="hidden"
@@ -667,13 +723,13 @@ export default function WelcomePage() {
             <div className="text-center space-y-4">
               <h2 className="text-3xl font-semibold text-slate-100">Processing documents...</h2>
               <p className="text-slate-300 text-lg">
-                We&apos;re analyzing your {pdfFiles.length} PDF{pdfFiles.length > 1 ? 's' : ''} to enable intelligent conversations
+                We&apos;re analyzing your {uploadedFiles.length} file{uploadedFiles.length > 1 ? 's' : ''} to enable intelligent conversations
               </p>
               
               {/* Show file list during upload */}
-              {pdfFiles.length > 1 && (
+              {uploadedFiles.length > 1 && (
                 <div className="max-w-md mx-auto space-y-2 mt-6">
-                  {pdfFiles.map((file, index) => (
+                  {uploadedFiles.map((file, index) => (
                     <div key={index} className="flex items-center justify-between bg-slate-800/30 rounded-lg px-4 py-2 text-sm">
                       <span className="text-slate-300 truncate flex-1">{file.name}</span>
                       <span className="text-blue-400 ml-2">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
@@ -702,16 +758,16 @@ export default function WelcomePage() {
               <div className="flex items-center gap-4">
                 <div className="relative w-10 h-10 bg-gradient-to-br from-cyan-500/30 to-blue-600/30 rounded-xl flex items-center justify-center shadow-lg border border-cyan-400/30">
                   <div className="absolute inset-0 bg-cyan-400/10 rounded-xl animate-pulse"></div>
-                  {pdfFiles.length > 0 ? <UploadCloud className="w-5 h-5 text-cyan-300 relative z-10" /> : <Bot className="w-5 h-5 text-cyan-300 relative z-10" />}
+                  {uploadedFiles.length > 0 ? <UploadCloud className="w-5 h-5 text-cyan-300 relative z-10" /> : <Bot className="w-5 h-5 text-cyan-300 relative z-10" />}
                 </div>
                 <div className="flex-1">
                   <h2 className="text-lg font-semibold text-cyan-100">
-                    {pdfFiles.length > 0 ? "Document Analysis" : "Promptly"}
+                    {uploadedFiles.length > 0 ? "Document Analysis" : "Promptly"}
                   </h2>
                   <div className="flex items-center gap-3 mt-1">
                     <p className="text-slate-400 text-sm">
-                      {pdfFiles.length > 0 
-                        ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed`
+                      {uploadedFiles.length > 0 
+                        ? `${uploadedFiles.length} document${uploadedFiles.length > 1 ? 's' : ''} processed`
                         : "Promptly conversation mode"
                       }
                     </p>
@@ -734,11 +790,11 @@ export default function WelcomePage() {
                     <Bot className="w-8 h-8 text-cyan-400 relative z-10" />
                   </div>
                   <h3 className="text-2xl font-semibold text-cyan-100 mb-3">
-                    {pdfFiles.length > 0 ? "Neural Analysis Ready" : "Hello i'm your intelligent assistant."}
+                    {uploadedFiles.length > 0 ? "Neural Analysis Ready" : "Hello i'm your intelligent assistant."}
                   </h3>
                   <p className="text-slate-300 mb-8">
-                    {pdfFiles.length > 0 
-                      ? `${pdfFiles.length} document${pdfFiles.length > 1 ? 's' : ''} processed and ready for queries.`
+                    {uploadedFiles.length > 0 
+                      ? `${uploadedFiles.length} document${uploadedFiles.length > 1 ? 's' : ''} processed and ready for queries.`
                       : "Start a conversation with Promptly."
                     }
                   </p>
@@ -808,7 +864,7 @@ export default function WelcomePage() {
                     type="text"
                     value={input}
                     onChange={e => setInput(e.target.value)}
-                    placeholder={pdfFiles.length > 0 ? "Query documents..." : "Enter command..."}
+                    placeholder={uploadedFiles.length > 0 ? "Query documents..." : "Enter command..."}
                     className="w-full h-12 bg-slate-900/70 border-cyan-500/30 text-cyan-100 placeholder:text-slate-400 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20 rounded-xl px-4 py-3 pr-4 text-base backdrop-blur-sm transition-all duration-200 shadow-inner"
                   />
                   <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/5 via-transparent to-blue-400/5 rounded-xl pointer-events-none"></div>
@@ -872,3 +928,4 @@ export default function WelcomePage() {
     </div>
   );
 }
+
