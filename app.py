@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template, jsonify
 import os
+import re
 from dotenv import load_dotenv
 import chromadb
 import torch
@@ -15,7 +16,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 import fitz  # PyMuPDF
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import io
 import google.generativeai as genai
 import platform
@@ -84,6 +85,18 @@ HANDWRITING_SOURCE_FILES = {}
 FAST_RESULT_LIMIT = 6
 FULL_RESULT_LIMIT = 12
 QUERY_EMBED_CACHE_SIZE = 64
+RELEVANCE_DISTANCE_THRESHOLD = float(os.getenv("RELEVANCE_DISTANCE_THRESHOLD", "1.25"))
+MIN_OCR_IMAGE_DIMENSION = int(os.getenv("MIN_OCR_IMAGE_DIMENSION", "900"))
+OCR_TESSERACT_CONFIG = os.getenv("TESSERACT_CONFIG", "--oem 3 --psm 6")
+PAGE_OCR_DPI = int(os.getenv("PAGE_OCR_DPI", "220"))
+MAX_SOURCE_FILES_PER_QUERY = int(os.getenv("MAX_SOURCE_FILES_PER_QUERY", "4"))
+AUTO_SCOPE_LAST_UPLOAD = os.getenv("AUTO_SCOPE_LAST_UPLOAD", "true").lower() != "false"
+DOCUMENT_TEXT_CACHE = {}
+LEXICAL_STOP_WORDS = {
+    "what", "is", "are", "the", "a", "an", "how", "why", "when", "where",
+    "who", "which", "tell", "me", "about", "please", "find", "show", "give",
+    "my", "his", "her", "their", "does", "did", "can", "you", "explain"
+}
 
 trocr_processor = None
 trocr_model = None
@@ -121,6 +134,21 @@ def get_query_embedding(text):
 def parse_pdf_text(path):
     return extract_text(path)
 
+def preprocess_image_for_ocr(image):
+    """Normalize contrast and size so OCR stays consistent across uploads."""
+    gray = image.convert("L")
+    width, height = gray.size
+    min_dim = max(1, min(width, height))
+
+    if min_dim < MIN_OCR_IMAGE_DIMENSION:
+        scale = MIN_OCR_IMAGE_DIMENSION / min_dim
+        new_size = (int(width * scale), int(height * scale))
+        gray = gray.resize(new_size, Image.LANCZOS)
+
+    gray = ImageOps.autocontrast(gray)
+    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+    return gray
+
 def ocr_with_trocr(image):
     """Run handwritten OCR on a PIL image with TrOCR."""
     if not ENABLE_HANDWRITING_OCR or trocr_processor is None or trocr_model is None:
@@ -137,18 +165,22 @@ def ocr_with_trocr(image):
         return ""
 
 def run_ocr_pipeline_on_image(image):
-    text = pytesseract.image_to_string(image)
     handwriting_hit = False
+    processed_image = preprocess_image_for_ocr(image)
+    text = pytesseract.image_to_string(processed_image, config=OCR_TESSERACT_CONFIG).strip()
+
+    if not text:
+        text = pytesseract.image_to_string(image, config=OCR_TESSERACT_CONFIG).strip()
 
     if ENABLE_HANDWRITING_OCR:
         trocr_text = ocr_with_trocr(image)
         if trocr_text:
-            if text.strip():
+            if text:
                 if trocr_text.lower() not in text.lower():
                     text = (text + "\n" + trocr_text).strip()
                     handwriting_hit = True
             else:
-                text = trocr_text
+                text = trocr_text.strip()
                 handwriting_hit = True
 
     return text, handwriting_hit
@@ -160,12 +192,14 @@ def extract_images_and_ocr(pdf_path):
     total_images = 0
     successful_ocr = 0
     handwriting_successful_ocr = 0
+    fallback_pages = 0
     
     try:
         for page_number in range(len(doc)):
             page = doc.load_page(page_number)
             images = page.get_images(full=True)
             total_images += len(images)
+            page_text_found = False
             
             for img in images:
                 try:
@@ -180,13 +214,31 @@ def extract_images_and_ocr(pdf_path):
                     if text.strip():  # Only add non-empty text
                         image_texts.append(text)
                         successful_ocr += 1
+                        page_text_found = True
                 except Exception as img_error:
                     print(f"  ⚠ OCR failed for image on page {page_number + 1}: {str(img_error)}")
+                    continue
+
+            if not page_text_found:
+                try:
+                    pix = page.get_pixmap(dpi=PAGE_OCR_DPI, alpha=False)
+                    raster_bytes = pix.tobytes("png")
+                    with Image.open(io.BytesIO(raster_bytes)) as raster_image:
+                        text, handwriting_hit = run_ocr_pipeline_on_image(raster_image)
+                    if handwriting_hit:
+                        handwriting_successful_ocr += 1
+                    if text.strip():
+                        image_texts.append(text)
+                        successful_ocr += 1
+                        fallback_pages += 1
+                        print(f"  🔁 Page {page_number + 1}: fallback raster OCR captured text")
+                except Exception as fallback_error:
+                    print(f"  ⚠ Page {page_number + 1} fallback OCR failed: {fallback_error}")
                     continue
         
         print(
             f"  📊 OCR Stats: {total_images} images found, {successful_ocr} successfully processed"
-            f" (handwriting hits: {handwriting_successful_ocr})"
+            f" (handwriting hits: {handwriting_successful_ocr}, rasterized pages: {fallback_pages})"
         )
         if total_images > 0 and successful_ocr == 0:
             print("  ⚠ WARNING: No text extracted from images. Check Tesseract installation.")
@@ -196,6 +248,7 @@ def extract_images_and_ocr(pdf_path):
             "images_found": total_images,
             "images_processed": successful_ocr,
             "handwriting_images_processed": handwriting_successful_ocr,
+            "pages_rasterized": fallback_pages,
         }
     except Exception as e:
         print(f"  ❌ OCR Error: {str(e)}")
@@ -204,8 +257,11 @@ def extract_images_and_ocr(pdf_path):
             "images_found": 0,
             "images_processed": 0,
             "handwriting_images_processed": 0,
+            "pages_rasterized": fallback_pages,
             "error": str(e),
         }
+    finally:
+        doc.close()
 
 def process_image_file(image_path):
     try:
@@ -330,15 +386,24 @@ def upload():
         return jsonify({"status": "error", "message": message})
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100
+        chunk_size=600,
+        chunk_overlap=120
     )
     chunks = text_splitter.split_text(combined_text)
+    DOCUMENT_TEXT_CACHE[filename] = combined_text
 
     file_has_handwriting = ocr_result.get("handwriting_images_processed", 0) > 0
     HANDWRITING_SOURCE_FILES[filename] = file_has_handwriting
 
     doc_label = "PDF" if is_pdf else "Image"
+
+    try:
+        collection.delete(where={"source_file": filename})
+        print(f"🧹 Cleared previous chunks for {filename}")
+    except Exception:
+        # Safe to ignore when file has not been seen before
+        pass
+
     print(f"{doc_label} split into {len(chunks)} chunk(s). Adding to vector DB...")
     for idx, chunk in tqdm(enumerate(chunks), total=len(chunks), desc="Processing chunks"):
         collection.add(
@@ -369,6 +434,7 @@ def upload():
             "images_found": ocr_result.get("images_found", 0),
             "images_processed": ocr_result.get("images_processed", 0),
             "handwriting_images_processed": ocr_result.get("handwriting_images_processed", 0),
+            "pages_rasterized": ocr_result.get("pages_rasterized", 0),
             "total_chunks": len(chunks)
         },
         "source_lock": {
@@ -470,6 +536,54 @@ def get_effective_source_file():
         return files[-1] if files else ""
     except Exception:
         return ""
+
+def lexical_fallback_search(query, active_source_file=None):
+    """Simple keyword-based search used when semantic retrieval misses short facts."""
+    if not DOCUMENT_TEXT_CACHE:
+        return None
+
+    query_lower = query.lower()
+    tokens = [
+        token for token in re.findall(r"[a-z0-9]+", query_lower)
+        if len(token) > 2 and token not in LEXICAL_STOP_WORDS
+    ]
+    if not tokens:
+        stripped = query_lower.strip()
+        if not stripped:
+            return None
+        tokens = [stripped]
+
+    candidates = DOCUMENT_TEXT_CACHE.items()
+    if active_source_file:
+        text = DOCUMENT_TEXT_CACHE.get(active_source_file)
+        candidates = [(active_source_file, text)] if text else []
+
+    best_match = None
+    best_score = 0
+
+    for filename, text in candidates:
+        if not text:
+            continue
+        lower_text = text.lower()
+        match_index = -1
+        score = 0
+
+        for token in tokens:
+            idx = lower_text.find(token)
+            if idx != -1:
+                score += 1
+                if match_index == -1 or idx < match_index:
+                    match_index = idx
+
+        if score > 0 and match_index != -1:
+            snippet_start = max(0, match_index - 400)
+            snippet_end = min(len(text), match_index + 400)
+            snippet = text[snippet_start:snippet_end].strip()
+            if score > best_score:
+                best_match = (filename, snippet)
+                best_score = score
+
+    return best_match
 
 def search_online(query):
     if OFFLINE_ONLY:
@@ -763,6 +877,14 @@ def chat():
     print(f"🔧 Current Mode: {'OFFLINE' if OFFLINE_ONLY else 'ONLINE'}")
     active_source_file = get_effective_source_file()
 
+    if SOURCE_LOCK_ENABLED and active_source_file:
+        query_source_file = active_source_file
+    elif AUTO_SCOPE_LAST_UPLOAD and LAST_UPLOADED_FILE:
+        query_source_file = LAST_UPLOADED_FILE
+        print(f"📂 Auto-focused on most recent upload: {query_source_file}")
+    else:
+        query_source_file = None
+
     # If ONLINE mode is enabled, search the web directly
     if not OFFLINE_ONLY:
         print("🌐 ONLINE MODE: Searching the web directly...")
@@ -772,10 +894,10 @@ def chat():
 
     # OFFLINE MODE: Check if we have documents
     try:
-        all_docs = collection.get(limit=1)
-        has_documents = len(all_docs.get('ids', [])) > 0
-        print(f"📚 Documents in database: {'Yes' if has_documents else 'No'}")
-    except:
+        doc_count = collection.count()
+        has_documents = doc_count > 0
+        print(f"📚 Documents in database: {'Yes' if has_documents else 'No'} (chunks: {doc_count})")
+    except Exception:
         has_documents = False
         print("⚠️ Could not check document database")
 
@@ -790,8 +912,10 @@ def chat():
     print("⏳ Generating query embedding...")
     if SOURCE_LOCK_ENABLED and active_source_file:
         print(f"📌 Source lock active: {active_source_file}")
+    elif query_source_file:
+        print(f"📁 Query scope: {query_source_file}")
 
-    where_filter = {"source_file": active_source_file} if SOURCE_LOCK_ENABLED and active_source_file else None
+    where_filter = {"source_file": query_source_file} if query_source_file else None
     query_embedding = get_query_embedding(query)
 
     def run_vector_search(limit):
@@ -804,7 +928,7 @@ def chat():
             kwargs["where"] = where_filter
         return collection.query(**kwargs)
 
-    def process_results(results, limit):
+    def process_results(results, limit, max_files):
         docs = results.get("documents", [[]])[0] if results.get("documents") else []
         ids = results.get("ids", [[]])[0] if results.get("ids") else []
         distances = results.get("distances", [[]])[0] if results.get("distances") else []
@@ -830,9 +954,18 @@ def chat():
             }
             for chunk_id, chunk, distance, metadata in zip(ids, docs, distances, metadatas)
         ]
-        combined.sort(key=lambda x: x['distance'])
 
-        selected = combined[:limit]
+        filtered = []
+        allowed_files = []
+        for item in combined:
+            file_name = item['file']
+            if max_files and file_name not in allowed_files:
+                if len(allowed_files) >= max_files:
+                    continue
+                allowed_files.append(file_name)
+            filtered.append(item)
+
+        selected = filtered[:limit]
         context_chunks = [item['chunk'] for item in selected]
         selected_distances = [item['distance'] for item in selected]
         context = "\n\n---\n\n".join(context_chunks)
@@ -856,9 +989,12 @@ def chat():
             "selected_count": len(selected)
         }
 
-    print(f"⚡ Running fast vector search (top {FAST_RESULT_LIMIT})")
-    results = run_vector_search(FAST_RESULT_LIMIT)
-    payload = process_results(results, FAST_RESULT_LIMIT)
+    file_cap = 1 if query_source_file else MAX_SOURCE_FILES_PER_QUERY
+
+    search_limit = max(FAST_RESULT_LIMIT, FULL_RESULT_LIMIT)
+    print(f"⚡ Running vector search (top {search_limit})")
+    results = run_vector_search(search_limit)
+    payload = process_results(results, FAST_RESULT_LIMIT, file_cap)
 
     needs_expansion = (
         FULL_RESULT_LIMIT > FAST_RESULT_LIMIT and (
@@ -868,9 +1004,8 @@ def chat():
     )
 
     if needs_expansion:
-        print(f"⚡ Sparse results, expanding to top {FULL_RESULT_LIMIT} chunks...")
-        results = run_vector_search(FULL_RESULT_LIMIT)
-        payload = process_results(results, FULL_RESULT_LIMIT)
+        print(f"⚡ Sparse results, reusing cached search results up to top {FULL_RESULT_LIMIT} chunks...")
+        payload = process_results(results, FULL_RESULT_LIMIT, file_cap)
 
     context = payload["context"]
     context_chunks = payload["context_chunks"]
@@ -896,19 +1031,26 @@ def chat():
     
     if distances and len(distances) > 0:
         best_distance = min(distances)
-        # Further relaxed threshold from 1.2 to 1.5
-        # Semantic search can have high distances for factual queries
-        # e.g., "What is X's profession?" vs "X Computer Engineer" = high distance
-        is_relevant = best_distance < 1.0
+        is_relevant = best_distance < RELEVANCE_DISTANCE_THRESHOLD
         print(f"   Best match distance: {best_distance:.4f}")
-        print(f"   Relevance threshold: 1.0")
+        print(f"   Relevance threshold: {RELEVANCE_DISTANCE_THRESHOLD:.2f}")
         print(f"   Result: {'✅ RELEVANT' if is_relevant else '❌ NOT RELEVANT (try rephrasing)'}")
 
     # If not relevant in offline mode
     if not context or not is_relevant:
-        print("\n❌ No relevant information found in uploaded documents")
+        print("\n❌ Semantic search missed. Attempting lexical fallback...")
         if distances and len(distances) > 0:
-            print(f"   Closest match was {best_distance:.4f} (threshold: 1.5)")
+            print(f"   Closest match was {best_distance:.4f} (threshold: {RELEVANCE_DISTANCE_THRESHOLD:.2f})")
+
+        fallback_match = lexical_fallback_search(query, query_source_file)
+
+        if fallback_match:
+            fallback_file, fallback_snippet = fallback_match
+            print(f"   🔎 Lexical fallback hit in {fallback_file}")
+            response = generate_answer(fallback_snippet, query)
+            response = f"Sources: {fallback_file} [lexical fallback]\n\n" + response
+            print("#"*60 + "\n")
+            return jsonify({"response": response})
 
         print("   • Try using keywords directly (e.g., use 'engineer' instead of 'profession')")
         print("   • Try asking differently (e.g., 'Tell me about X' instead of 'What is X')")

@@ -23,6 +23,8 @@ const isSupportedFile = (file: File) => {
   return ext ? ACCEPTED_FILE_EXTENSIONS.includes(`.${ext}`) : false;
 };
 
+const NOTIFICATION_SOUND_URL = "/sounds/xp-startup.wav";
+
 const splitFilesBySupport = (files: File[]) => {
   return files.reduce(
     (acc, file) => {
@@ -48,6 +50,7 @@ export default function WelcomePage() {
   const [isOfflineMode, setIsOfflineMode] = useState(true); // Changed to offline by default as per backend
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -176,9 +179,31 @@ export default function WelcomePage() {
     e.preventDefault();
   };
 
+  const ensureAudioElement = () => {
+    if (typeof window === "undefined") return null;
+    if (!audioElementRef.current) {
+      audioElementRef.current = new Audio(NOTIFICATION_SOUND_URL);
+      audioElementRef.current.preload = "auto";
+    }
+    return audioElementRef.current;
+  };
+
+  const playNotificationSound = async () => {
+    const audio = ensureAudioElement();
+    if (!audio) return;
+    try {
+      audio.currentTime = 0;
+      await audio.play();
+    } catch (error) {
+      console.warn("Unable to play notification sound:", error);
+    }
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
+
+    ensureAudioElement();
     
     const userMessage = input;
     setChat(prev => [...prev, { role: "user", text: userMessage }]);
@@ -235,9 +260,11 @@ export default function WelcomePage() {
       console.log('📊 Response preview:', data.response.substring(0, 100) + '...');
       
       setChat(prev => [...prev, { role: "ai", text: data.response }]);
+      playNotificationSound();
     } catch (error) {
       console.error('❌ Chat failed:', error);
       setChat(prev => [...prev, { role: "ai", text: `Sorry, there was an error: ${error instanceof Error ? error.message : 'Unknown error'}` }]);
+      playNotificationSound();
     } finally {
       setAiTyping(false);
       setSearchStatus("");

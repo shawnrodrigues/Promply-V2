@@ -11,6 +11,7 @@
 - [x] Error handling and fallback behavior
 - [ ] Deployment (Docker)
 - [x] Handwritting Detection
+- [x] Added Notification Sound
 - [x] Added image recognization and also image support
 
 ---
@@ -21,7 +22,7 @@
 - [x] Offline mode toggle in frontend
 - [x] Enhance UI responsiveness on mobile devices
 - [x] Enhanced answer retrieval
-- [ ] Merging both the applications in one 
+- [x] Merging both the applications in one (Bat File)
 
 ---
 
