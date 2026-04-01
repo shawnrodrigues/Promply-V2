@@ -339,7 +339,6 @@ def build_html_report(summary, metrics_list, output_file):
   <div class='wrap'>
     <div class='hero'>
       <h1>Promply-V2 Evaluation Report</h1>
-      <p>OCR accuracy assessment — automatic metrics generation</p>
       <div class='kpi-grid'>
         <div class='kpi-card'>
           <div class='kpi-label'>Documents</div>

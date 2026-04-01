@@ -1,12 +1,12 @@
 {
-  "documents": 19,
-  "pages": 551,
-  "images": 27,
+  "documents": 20,
+  "pages": 552,
+  "images": 28,
   "extraction_coverage_pct": 100.0,
   "ocr_success_rate_pct": 100.0,
-  "ocr_contribution_pct": 1.63,
+  "ocr_contribution_pct": 1.65,
   "answer_accuracy_pct": null,
   "answer_confidence_proxy_pct": 94.0,
-  "total_processing_time_sec": 62.95,
-  "avg_time_per_doc_sec": 3.31
+  "total_processing_time_sec": 64.75,
+  "avg_time_per_doc_sec": 3.24
 }

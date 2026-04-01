@@ -1,12 +1,30 @@
 doc_id,file_name,pages,images_found,images_processed,ocr_success_rate_pct,native_chars,ocr_chars,total_chars,ocr_contribution_pct,wer_pct,cer_pct,processing_time_sec,native_text,ocr_text
-D01,Triumph Speed 400 Scrambler 400 X Owners Handbook UK English 09-2023.pdf,180,1,1,100.0,273259,7,273266,0.0,,,13.9,"OWNER'S HANDBOOK 01
+D01,Shawn-22CE88D-ID-Card (1).pdf,1,1,1,100.0,254,222,476,46.64,,,1.93,"PADRE  CONCEICAO COLLEGE OF  ENGINEERING 
+Agnel Ashram, Verna,  Goa 403722 Ph: 0832-2791266/67 
+
+NAME:Shawn  lgnace Rodrigues 
+
+DEPT:Computer Engineering 
+ROLL  NO.22CE88D 
+
+PR.  NO.202208411 
+
+2025 
+","PADRE CONCEICAO COLLEGE OF ENGINEERING
+Agnel Ashram, Verna, Goa 403722 Ph: 0832-2791266/67
+NAME ‘Shawn Ignace Rodrigues o
+DEPT: Computer Engineering x
+— ROLL NO.22CE88D E
+£6 oe tal PR. NO.202208411 é
+"
+D02,Triumph Speed 400 Scrambler 400 X Owners Handbook UK English 09-2023.pdf,180,1,1,100.0,273259,7,273266,0.0,,,11.31,"OWNER'S HANDBOOK 01
 
 Speed 400 and Scrambler 400 X
 
 This handbook contains information on the Triumph Speed 400 and Scrambler 400 X motorcycles. Always store this
 Owner's Handbook with the motorcycle ",">= 6 O
 "
-D02,WhatsApp Image 2026-02-09 at 6.15.33 PM.pdf,1,1,1,100.0,1,281,282,99.65,,,0.56,,"4 ns rs
+D03,WhatsApp Image 2026-02-09 at 6.15.33 PM.pdf,1,1,1,100.0,1,281,282,99.65,,,0.44,,"4 ns rs
 rs rPYOoOZ |
 S35 Mh ee
 ESP 4
@@ -26,7 +44,7 @@ wow 2
 S
 Oo a
 r"
-D03,WhatsApp Image 2026-02-09 at 6.15.34 PM.pdf,1,1,1,100.0,1,192,193,99.48,,,0.53,,"S a zo Panate: =
+D04,WhatsApp Image 2026-02-09 at 6.15.34 PM.pdf,1,1,1,100.0,1,192,193,99.48,,,0.4,,"S a zo Panate: =
 2 ""3 | # bade ar: | 9
 8 g Sere ile) | S
 2 tit 33
@@ -52,14 +70,14 @@ z wd
 Z
 Form 7 Rule 16(2)
 "
-D04,day5 notes.pdf,7,7,7,100.0,7,4611,4618,99.85,,,12.7,,"> >,
+D05,day5 notes.pdf,7,7,7,100.0,7,4611,4618,99.85,,,11.03,,"> >,
 —— Nig indexes 80 _colyarns vomit
 Te= pid st foo Many indexes, sD
 7 “Weibya indexes vwhh at Weg
 — sequataol and rNowmeve. hcse KL
 _  etonytdar 453 Mecduded solunw ¢
 — | Bae dicat 1a , % of mentah"
-D05,extending.pdf,115,0,0,N/A,264497,0,264497,0.0,,,3.61,"Extending and Embedding Python
+D06,extending.pdf,115,0,0,N/A,264497,0,264497,0.0,,,4.3,"Extending and Embedding Python
 Release 3.13.0
 
 Guido van Rossum and the Python development team
@@ -72,7 +90,7 @@ Email: docs@python.org
 CONTENTS
 
 1 Recommended third p",
-D06,faq.pdf,125,0,0,N/A,303113,0,303113,0.0,,,4.62,"Python Frequently Asked Questions
+D07,faq.pdf,125,0,0,N/A,303113,0,303113,0.0,,,5.44,"Python Frequently Asked Questions
 Release 3.13.0
 
 Guido van Rossum and the Python development team
@@ -85,7 +103,7 @@ Email: docs@python.org
 CONTENTS
 
 1 General Python F",
-D07,golang.pdf,15,15,15,100.0,15,9978,9993,99.85,,,22.27,,"_——— CC ___§__ cc ne ee a
+D08,golang.pdf,15,15,15,100.0,15,9978,9993,99.85,,,23.85,,"_——— CC ___§__ cc ne ee a
 § MTéWT EF 5
 12939 4 6 § 7
 1617 18 19 a0 SS '26
@@ -95,10 +113,10 @@ ott ; Thursday
 2 Howe do un, a : > oe ae
 ———teamwinal  navigake to pa at
 Co"
-D08,handwriting_20260328_005631_via_10015_io.pdf,1,1,1,100.0,1,1412,1413,99.93,,,0.73,,"Ruby i> A high-level, interpreted Programming language created boy Yukihiro
+D09,handwriting_20260328_005631_via_10015_io.pdf,1,1,1,100.0,1,1412,1413,99.93,,,0.85,,"Ruby i> A high-level, interpreted Programming language created boy Yukihiro
 Matsumoto in the mid-\9905. It was designed with the goal of making Programming,
 Simele, natural, And @nyoyalole, £ollowing "
-D09,howto-annotations.pdf,5,0,0,N/A,8929,0,8929,0.0,,,0.11,"Annotations Best Practices
+D10,howto-annotations.pdf,5,0,0,N/A,8929,0,8929,0.0,,,0.15,"Annotations Best Practices
 
 Release 3.13.0
 
@@ -112,7 +130,7 @@ Email: docs@python.org
 Contents
 
 1 Accessing The Annotation",
-D10,howto-argparse-optparse.pdf,1,0,0,N/A,2155,0,2155,0.0,,,0.03,"Upgrading optparse code
+D11,howto-argparse-optparse.pdf,1,0,0,N/A,2155,0,2155,0.0,,,0.05,"Upgrading optparse code
 
 Release 3.13.0
 
@@ -126,7 +144,7 @@ Email: docs@python.org
 Contents
 
 Originally, the argparse modu",
-D11,howto-argparse.pdf,14,0,0,N/A,25588,0,25588,0.0,,,0.4,"Argparse Tutorial
+D12,howto-argparse.pdf,14,0,0,N/A,25588,0,25588,0.0,,,0.55,"Argparse Tutorial
 
 Release 3.13.0
 
@@ -144,7 +162,7 @@ Contents
 2 The basics
 
 3 Introdu",
-D12,howto-clinic.pdf,1,0,0,N/A,266,0,266,0.0,,,0.06,"Argument Clinic How-To
+D13,howto-clinic.pdf,1,0,0,N/A,266,0,266,0.0,,,0.03,"Argument Clinic How-To
 
 Release 3.13.0
 
@@ -160,7 +178,7 @@ Contents
 (cid:174) Note
 
 The Argument C",
-D13,howto-curses.pdf,8,0,0,N/A,21986,0,21986,0.0,,,0.24,"Curses Programming with Python
+D14,howto-curses.pdf,8,0,0,N/A,21986,0,21986,0.0,,,0.39,"Curses Programming with Python
 
 Release 3.13.0
 
@@ -176,7 +194,7 @@ Contents
 1 What is curses?
 
 1.1",
-D14,howto-descriptor.pdf,21,0,0,N/A,41782,0,41782,0.0,,,0.65,"Descriptor Guide
+D15,howto-descriptor.pdf,21,0,0,N/A,41782,0,41782,0.0,,,0.91,"Descriptor Guide
 
 Release 3.13.0
 
@@ -192,7 +210,7 @@ Contents
 1 Primer
 
 1.1 Simple example: A desc",
-D15,howto-enum.pdf,26,0,0,N/A,41936,0,41936,0.0,,,0.66,"Enum HOWTO
+D16,howto-enum.pdf,26,0,0,N/A,41936,0,41936,0.0,,,0.83,"Enum HOWTO
 
 Release 3.13.0
 
@@ -206,7 +224,7 @@ Email: docs@python.org
 Contents
 
 1 Programmatic access to enumeration membe",
-D16,howto-free-threading-extensions.pdf,5,0,0,N/A,9185,0,9185,0.0,,,0.13,"C API Extension Support for Free
+D17,howto-free-threading-extensions.pdf,5,0,0,N/A,9185,0,9185,0.0,,,0.16,"C API Extension Support for Free
 Threading
 
 Release 3.13.0
@@ -221,7 +239,7 @@ Email: docs@python.org
 Contents
 
 1 Identify",
-D17,howto-free-threading-python.pdf,4,0,0,N/A,6620,0,6620,0.0,,,0.09,"Python experimental support for free
+D18,howto-free-threading-python.pdf,4,0,0,N/A,6620,0,6620,0.0,,,0.1,"Python experimental support for free
 threading
 
 Release 3.13.0
@@ -236,7 +254,7 @@ Email: docs@python.org
 Contents
 
 1 Inst",
-D18,howto-functional.pdf,20,0,0,N/A,46480,0,46480,0.0,,,0.63,"Functional Programming HOWTO
+D19,howto-functional.pdf,20,0,0,N/A,46480,0,46480,0.0,,,0.87,"Functional Programming HOWTO
 
 Release 3.13.0
 
@@ -253,7 +271,7 @@ Contents
 
 .
 1.1 Fo",
-D19,introtogo.pdf,1,1,1,100.0,1,797,798,99.87,,,1.03,,"bee Go is a Stakicalty typed, compiled
+D20,introtogo.pdf,1,1,1,100.0,1,797,798,99.87,,,1.16,,"bee Go is a Stakicalty typed, compiled
 bee POG RAMMING language designed fot
 = simplicity efficiency , and sksong __
 oye  CONCUTNAENCY GUppostk | making 7 ideal fos
