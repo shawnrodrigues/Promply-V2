@@ -132,7 +132,32 @@ def get_query_embedding(text):
     return _cached_query_embedding(text)
 
 def parse_pdf_text(path):
-    return extract_text(path)
+    """Extract textual content from PDFs with graceful fallbacks."""
+    primary_text = ""
+
+    try:
+        primary_text = extract_text(path) or ""
+    except Exception as e:
+        print(f"  ⚠ PDFMiner extraction failed: {e}")
+
+    if primary_text.strip():
+        return primary_text
+
+    # Fallback: use PyMuPDF's text extractor when PDFMiner returns nothing
+    try:
+        fallback_pages = []
+        with fitz.open(path) as doc:
+            for page_number, page in enumerate(doc, start=1):
+                page_text = page.get_text("text")
+                if page_text.strip():
+                    fallback_pages.append(page_text)
+        if fallback_pages:
+            print("  🔁 PDF text extracted via PyMuPDF fallback")
+            return "\n".join(fallback_pages)
+    except Exception as e:
+        print(f"  ❌ PyMuPDF text extraction failed: {e}")
+
+    return ""
 
 def preprocess_image_for_ocr(image):
     """Normalize contrast and size so OCR stays consistent across uploads."""
@@ -1048,7 +1073,7 @@ def chat():
             fallback_file, fallback_snippet = fallback_match
             print(f"   🔎 Lexical fallback hit in {fallback_file}")
             response = generate_answer(fallback_snippet, query)
-            response = f"Sources: {fallback_file} [lexical fallback]\n\n" + response
+            response = f"Sources: {fallback_file}\n\n" + response
             print("#"*60 + "\n")
             return jsonify({"response": response})
 
