@@ -16,7 +16,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 import fitz  # PyMuPDF
 import pytesseract
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 import io
 import google.generativeai as genai
 import platform
@@ -88,10 +88,17 @@ QUERY_EMBED_CACHE_SIZE = 64
 RELEVANCE_DISTANCE_THRESHOLD = float(os.getenv("RELEVANCE_DISTANCE_THRESHOLD", "1.25"))
 MIN_OCR_IMAGE_DIMENSION = int(os.getenv("MIN_OCR_IMAGE_DIMENSION", "900"))
 OCR_TESSERACT_CONFIG = os.getenv("TESSERACT_CONFIG", "--oem 3 --psm 6")
+OCR_TESSERACT_VARIANTS = [
+    ("balanced", "--oem 3 --psm 6"),
+    ("balanced", "--oem 3 --psm 11"),
+    ("high_contrast", "--oem 3 --psm 4"),
+]
 PAGE_OCR_DPI = int(os.getenv("PAGE_OCR_DPI", "220"))
 MAX_SOURCE_FILES_PER_QUERY = int(os.getenv("MAX_SOURCE_FILES_PER_QUERY", "4"))
 AUTO_SCOPE_LAST_UPLOAD = os.getenv("AUTO_SCOPE_LAST_UPLOAD", "true").lower() != "false"
 DOCUMENT_TEXT_CACHE = {}
+OCR_TEXT_MIN_SCORE = float(os.getenv("OCR_TEXT_MIN_SCORE", "4.5"))
+ENABLE_LEXICAL_FALLBACK = os.getenv("ENABLE_LEXICAL_FALLBACK", "false").lower() == "true"
 LEXICAL_STOP_WORDS = {
     "what", "is", "are", "the", "a", "an", "how", "why", "when", "where",
     "who", "which", "tell", "me", "about", "please", "find", "show", "give",
@@ -140,16 +147,20 @@ def parse_pdf_text(path):
     except Exception as e:
         print(f"  ⚠ PDFMiner extraction failed: {e}")
 
-    if primary_text.strip():
+    primary_text = normalize_extracted_text(primary_text)
+    if primary_text and score_text_quality(primary_text) >= OCR_TEXT_MIN_SCORE:
         return primary_text
+
+    if primary_text:
+        print("  ⚠ PDFMiner text looked noisy; falling back to page text extraction")
 
     # Fallback: use PyMuPDF's text extractor when PDFMiner returns nothing
     try:
         fallback_pages = []
         with fitz.open(path) as doc:
             for page_number, page in enumerate(doc, start=1):
-                page_text = page.get_text("text")
-                if page_text.strip():
+                page_text = normalize_extracted_text(page.get_text("text"))
+                if page_text and score_text_quality(page_text) >= OCR_TEXT_MIN_SCORE:
                     fallback_pages.append(page_text)
         if fallback_pages:
             print("  🔁 PDF text extracted via PyMuPDF fallback")
@@ -159,7 +170,106 @@ def parse_pdf_text(path):
 
     return ""
 
-def preprocess_image_for_ocr(image):
+def normalize_extracted_text(text):
+    if not text:
+        return ""
+
+    text = text.replace("\r", "\n")
+    text = re.sub(r"-\n(?=\w)", "", text)
+
+    lines = []
+    for raw_line in text.split("\n"):
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+
+        compact = line.replace(" ", "")
+        alnum_ratio = sum(ch.isalnum() for ch in compact) / len(compact) if compact else 0
+        if len(compact) >= 8 and alnum_ratio < 0.25 and not re.search(r"\d", compact):
+            continue
+
+        lines.append(line)
+
+    while lines and lines[-1] == "":
+        lines.pop()
+
+    return "\n".join(lines).strip()
+
+
+def score_text_quality(text):
+    if not text:
+        return 0.0
+
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return 0.0
+
+    words = re.findall(r"[A-Za-z0-9']+", compact)
+    length = len(compact)
+    word_count = len(words)
+    letters = sum(ch.isalpha() for ch in compact)
+    alnum = sum(ch.isalnum() for ch in compact)
+    weird = sum(
+        not (ch.isalnum() or ch.isspace() or ch in ".,;:!?()[]{}-_/\\'\"@#&%+*=<>")
+        for ch in compact
+    )
+    avg_word_len = sum(len(word) for word in words) / word_count if word_count else 0
+    digit_ratio = sum(ch.isdigit() for ch in compact) / length
+
+    score = 0.0
+    score += min(length / 40.0, 4.0)
+    score += min(word_count / 4.0, 5.0)
+    score += (alnum / length) * 4.0
+    score += (letters / length) * 3.0
+    score += min(avg_word_len / 6.0, 2.0)
+    score -= (weird / length) * 10.0
+
+    if word_count <= 2 and length > 60:
+        score -= 2.0
+    if digit_ratio > 0.4 and letters < max(5, int(length * 0.1)):
+        score -= 2.0
+
+    return score
+
+
+def select_best_candidate(candidates):
+    best_candidate = ("", False, 0.0)
+
+    for candidate in candidates:
+        text = normalize_extracted_text(candidate[0])
+        if not text:
+            continue
+
+        handwriting_hit = bool(candidate[1])
+        score = candidate[2] if len(candidate) > 2 and candidate[2] is not None else score_text_quality(text)
+
+        if score > best_candidate[2] or (score == best_candidate[2] and len(text) > len(best_candidate[0])):
+            best_candidate = (text, handwriting_hit, score)
+
+    return best_candidate
+
+
+def merge_text_candidates(texts):
+    merged_lines = []
+    seen = set()
+
+    for text in texts:
+        cleaned = normalize_extracted_text(text)
+        if not cleaned:
+            continue
+        for line in cleaned.split("\n"):
+            key = line.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged_lines.append(line.strip())
+
+    return "\n".join(merged_lines).strip()
+
+
+def preprocess_image_for_ocr(image, mode="balanced"):
     """Normalize contrast and size so OCR stays consistent across uploads."""
     gray = image.convert("L")
     width, height = gray.size
@@ -171,7 +281,16 @@ def preprocess_image_for_ocr(image):
         gray = gray.resize(new_size, Image.LANCZOS)
 
     gray = ImageOps.autocontrast(gray)
-    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+    if mode == "high_contrast":
+        gray = ImageEnhance.Contrast(gray).enhance(2.2)
+        gray = ImageEnhance.Sharpness(gray).enhance(1.8)
+        gray = gray.filter(ImageFilter.MedianFilter(size=3))
+        gray = gray.point(lambda x: 255 if x > 170 else 0)
+    else:
+        gray = ImageEnhance.Contrast(gray).enhance(1.4)
+        gray = ImageEnhance.Sharpness(gray).enhance(1.5)
+        gray = gray.filter(ImageFilter.MedianFilter(size=3))
+
     return gray
 
 def ocr_with_trocr(image):
@@ -180,35 +299,56 @@ def ocr_with_trocr(image):
         return ""
 
     try:
-        rgb_image = image.convert("RGB")
+        rgb_image = preprocess_image_for_ocr(image, mode="high_contrast").convert("RGB")
         pixel_values = trocr_processor(images=rgb_image, return_tensors="pt").pixel_values.to(trocr_device)
         generated_ids = trocr_model.generate(pixel_values)
         text = trocr_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        return text.strip()
+        return normalize_extracted_text(text)
     except Exception as e:
         print(f"  ⚠ TrOCR failed: {e}")
         return ""
 
 def run_ocr_pipeline_on_image(image):
-    handwriting_hit = False
-    processed_image = preprocess_image_for_ocr(image)
-    text = pytesseract.image_to_string(processed_image, config=OCR_TESSERACT_CONFIG).strip()
+    candidates = []
 
-    if not text:
-        text = pytesseract.image_to_string(image, config=OCR_TESSERACT_CONFIG).strip()
+    for mode, config in OCR_TESSERACT_VARIANTS:
+        try:
+            processed_image = preprocess_image_for_ocr(image, mode=mode)
+            text = pytesseract.image_to_string(processed_image, config=config)
+            cleaned = normalize_extracted_text(text)
+            if cleaned:
+                candidates.append((cleaned, False, score_text_quality(cleaned)))
+        except Exception as e:
+            print(f"  ⚠ Tesseract OCR failed for mode={mode}, config={config}: {e}")
+
+    try:
+        raw_text = pytesseract.image_to_string(image, config=OCR_TESSERACT_CONFIG)
+        cleaned_raw = normalize_extracted_text(raw_text)
+        if cleaned_raw:
+            candidates.append((cleaned_raw, False, score_text_quality(cleaned_raw) - 0.5))
+    except Exception as e:
+        print(f"  ⚠ Raw Tesseract OCR failed: {e}")
 
     if ENABLE_HANDWRITING_OCR:
         trocr_text = ocr_with_trocr(image)
         if trocr_text:
-            if text:
-                if trocr_text.lower() not in text.lower():
-                    text = (text + "\n" + trocr_text).strip()
-                    handwriting_hit = True
-            else:
-                text = trocr_text.strip()
-                handwriting_hit = True
+            candidates.append((trocr_text, True, score_text_quality(trocr_text) + 1.0))
 
-    return text, handwriting_hit
+    if not candidates:
+        return "", False, 0.0
+
+    best_text, best_handwriting, best_score = select_best_candidate(candidates)
+
+    handwriting_texts = [candidate[0] for candidate in candidates if candidate[1] and candidate[2] >= best_score - 0.75]
+    if handwriting_texts and not best_handwriting:
+        merged = merge_text_candidates([best_text] + handwriting_texts)
+        merged_score = score_text_quality(merged)
+        if merged and merged_score >= best_score - 0.25:
+            best_text = merged
+            best_score = merged_score
+            best_handwriting = True
+
+    return best_text, best_handwriting, best_score
 
 def extract_images_and_ocr(pdf_path):
     """Extract images from PDF and perform OCR with proper error handling."""
@@ -224,7 +364,7 @@ def extract_images_and_ocr(pdf_path):
             page = doc.load_page(page_number)
             images = page.get_images(full=True)
             total_images += len(images)
-            page_text_found = False
+            page_candidates = []
             
             for img in images:
                 try:
@@ -233,29 +373,38 @@ def extract_images_and_ocr(pdf_path):
                     image_bytes = base_image["image"]
                     image = Image.open(io.BytesIO(image_bytes))
 
-                    text, handwriting_hit = run_ocr_pipeline_on_image(image)
-                    if handwriting_hit:
-                        handwriting_successful_ocr += 1
-                    if text.strip():  # Only add non-empty text
-                        image_texts.append(text)
-                        successful_ocr += 1
-                        page_text_found = True
+                    text, handwriting_hit, score = run_ocr_pipeline_on_image(image)
+                    if text.strip():
+                        page_candidates.append((text, handwriting_hit, score))
                 except Exception as img_error:
                     print(f"  ⚠ OCR failed for image on page {page_number + 1}: {str(img_error)}")
                     continue
 
-            if not page_text_found:
+            best_page_text, best_page_handwriting, best_page_score = select_best_candidate(page_candidates)
+
+            if best_page_text and best_page_score >= OCR_TEXT_MIN_SCORE:
+                image_texts.append(best_page_text)
+                successful_ocr += 1
+                if best_page_handwriting:
+                    handwriting_successful_ocr += 1
+            else:
                 try:
                     pix = page.get_pixmap(dpi=PAGE_OCR_DPI, alpha=False)
                     raster_bytes = pix.tobytes("png")
                     with Image.open(io.BytesIO(raster_bytes)) as raster_image:
-                        text, handwriting_hit = run_ocr_pipeline_on_image(raster_image)
-                    if handwriting_hit:
-                        handwriting_successful_ocr += 1
+                        text, handwriting_hit, score = run_ocr_pipeline_on_image(raster_image)
+
+                    fallback_pages += 1
+                    raster_candidates = page_candidates[:]
                     if text.strip():
-                        image_texts.append(text)
+                        raster_candidates.append((text, handwriting_hit, score))
+
+                    best_text, best_handwriting, best_score = select_best_candidate(raster_candidates)
+                    if best_text and best_score >= OCR_TEXT_MIN_SCORE:
+                        image_texts.append(best_text)
                         successful_ocr += 1
-                        fallback_pages += 1
+                        if best_handwriting:
+                            handwriting_successful_ocr += 1
                         print(f"  🔁 Page {page_number + 1}: fallback raster OCR captured text")
                 except Exception as fallback_error:
                     print(f"  ⚠ Page {page_number + 1} fallback OCR failed: {fallback_error}")
@@ -291,7 +440,7 @@ def extract_images_and_ocr(pdf_path):
 def process_image_file(image_path):
     try:
         image = Image.open(image_path)
-        text, handwriting_hit = run_ocr_pipeline_on_image(image)
+        text, handwriting_hit, _ = run_ocr_pipeline_on_image(image)
         processed = 1 if text.strip() else 0
         return {
             "text": text,
@@ -506,8 +655,9 @@ STRICT RULES:
 - If the answer is clearly present, give a COMPREHENSIVE and DETAILED response using ALL relevant information from the context
 - If the answer is NOT in the document at all, respond only with: "This information was not found in the uploaded documents."
 - Do NOT guess or fill in gaps from general knowledge
-- Never add "additional information" about topics that were not requested. If the user asks about Ruby, do NOT mention Python unless the user explicitly asked you to compare them or the context makes the comparison mandatory for understanding.
-- Ignore any context sentences that discuss unrelated technologies, people, or topics. Only include material that directly answers the user question.
+- Never add "additional information" about topics that were not requested.
+- Do not mention any language, technology, person, or topic that is not directly supported by the provided document context.
+- If the context does not contain a direct answer, say the answer was not found instead of trying to connect unrelated material.
 
 FORMATTING RULES:
 - Start with a direct 1-2 sentence summary answer
@@ -564,6 +714,9 @@ def get_effective_source_file():
 
 def lexical_fallback_search(query, active_source_file=None):
     """Simple keyword-based search used when semantic retrieval misses short facts."""
+    if not ENABLE_LEXICAL_FALLBACK:
+        return None
+
     if not DOCUMENT_TEXT_CACHE:
         return None
 
