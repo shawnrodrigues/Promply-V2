@@ -4,6 +4,8 @@ export async function POST(request: NextRequest) {
   try {
     // Get the JSON data from the request
     const body = await request.json();
+    const query = typeof body?.query === 'string' ? body.query : '';
+    console.log(`[api/chat] Forwarding query to Flask: ${query.slice(0, 120)}`);
     
     // Forward the request to your Flask backend
     const response = await fetch('http://localhost:6969/chat', {
@@ -14,13 +16,14 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(body),
     });
     
+    // Try to parse as JSON
+    const data = await response.json();
+    console.log(`[api/chat] Flask status ${response.status}; response length ${JSON.stringify(data).length}`);
+
     // Check if the response is successful
     if (!response.ok) {
       throw new Error(`Flask server responded with status: ${response.status}`);
     }
-    
-    // Try to parse as JSON
-    const data = await response.json();
     
     return NextResponse.json(data);
   } catch (error) {

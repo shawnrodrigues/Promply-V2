@@ -43,6 +43,8 @@ export default function WelcomePage() {
   const [step, setStep] = useState<"home" | "uploader" | "scanning" | "chat">("home");
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]); // Track any supported upload set
   const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({});
+  const [currentUploadIndex, setCurrentUploadIndex] = useState(0);
+  const [uploadStatusMessage, setUploadStatusMessage] = useState<string>("");
   const [chat, setChat] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   const [input, setInput] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
@@ -96,55 +98,133 @@ export default function WelcomePage() {
   const uploadMultipleFiles = async (files: File[]) => {
     try {
       const warnings: string[] = [];
+      const failures: string[] = [];
+      let successfulUploads = 0;
+      const initialProgress = files.reduce((acc, file) => {
+        acc[file.name] = 0;
+        return acc;
+      }, {} as {[key: string]: number});
+
+      setUploadProgress(initialProgress);
+      setCurrentUploadIndex(0);
+      setUploadStatusMessage("Preparing upload...");
+
+      const uploadSingleFile = (file: File) => {
+        return new Promise<any>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          const formData = new FormData();
+          formData.append("pdf", file);
+
+          xhr.open("POST", "/api/upload");
+
+          xhr.upload.onprogress = (event) => {
+            if (!event.lengthComputable) return;
+            const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+            setUploadProgress((prev) => ({
+              ...prev,
+              [file.name]: percent
+            }));
+          };
+
+          xhr.onload = () => {
+            let data: any = null;
+            try {
+              data = JSON.parse(xhr.responseText || "{}");
+            } catch {
+              reject(new Error("Upload failed: invalid server response."));
+              return;
+            }
+
+            if (xhr.status < 200 || xhr.status >= 300) {
+              reject(new Error(data?.error || data?.message || `Upload failed with status ${xhr.status}`));
+              return;
+            }
+
+            resolve(data);
+          };
+
+          xhr.onerror = () => {
+            reject(new Error("Network error during file upload."));
+          };
+
+          xhr.send(formData);
+        });
+      };
       
       // Upload each file individually to the existing /api/upload endpoint
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const formData = new FormData();
-        formData.append('pdf', file);
-        
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        
-        // Log detailed OCR stats
-        console.log(`File ${i + 1}/${files.length} uploaded:`, data.message);
-        if (data.stats) {
-          console.log('📊 Processing stats:', {
-            text: `${data.stats.text_characters} chars`,
-            ocr: `${data.stats.ocr_characters} chars`,
-            images: `${data.stats.images_processed}/${data.stats.images_found} processed`,
-            chunks: data.stats.total_chunks
-          });
-        }
-        
-        // Collect warnings
-        if (data.warning) {
-          warnings.push(`${file.name}: ${data.warning}`);
+        setCurrentUploadIndex(i + 1);
+        setUploadStatusMessage(`Uploading ${i + 1} of ${files.length}: ${file.name}`);
+
+        try {
+          const data = await uploadSingleFile(file);
+          
+          if (data.status === "error") {
+            throw new Error(data.message || `Upload failed for ${file.name}`);
+          }
+
+          if (data.error) {
+            throw new Error(data.error || `Upload failed for ${file.name}`);
+          }
+
+          successfulUploads += 1;
+          setUploadProgress((prev) => ({
+            ...prev,
+            [file.name]: 100
+          }));
+          
+          // Log detailed OCR stats
+          console.log(`File ${i + 1}/${files.length} uploaded:`, data.message);
+          if (data.stats) {
+            console.log('📊 Processing stats:', {
+              text: `${data.stats.text_characters} chars`,
+              ocr: `${data.stats.ocr_characters} chars`,
+              images: `${data.stats.images_processed}/${data.stats.images_found} processed`,
+              chunks: data.stats.total_chunks
+            });
+          }
+          
+          // Collect warnings
+          if (data.warning) {
+            warnings.push(`${file.name}: ${data.warning}`);
+          }
+        } catch (fileError) {
+          const message = fileError instanceof Error ? fileError.message : "Unknown upload error";
+          failures.push(`${file.name}: ${message}`);
+          setUploadProgress((prev) => ({
+            ...prev,
+            [file.name]: 0
+          }));
+          console.error(`❌ File ${i + 1}/${files.length} failed:`, message);
+          continue;
         }
       }
       
       console.log('All files uploaded successfully');
+
+      if (failures.length > 0) {
+        alert('⚠️ Some files failed to upload:\n\n' + failures.join('\n\n'));
+      }
+
+      if (successfulUploads === 0) {
+        setUploadStatusMessage("All uploads failed");
+        setStep("uploader");
+        return;
+      }
       
       // Show warnings if any
       if (warnings.length > 0) {
+        setUploadStatusMessage("Upload complete with warnings");
         alert('⚠️ Upload completed with warnings:\n\n' + warnings.join('\n\n') + '\n\nThe file text was processed, but OCR may have failed. Please check the console for details.');
+      } else {
+        setUploadStatusMessage(`Upload complete (${successfulUploads}/${files.length} files processed)`);
       }
       
       setStep("chat");
     } catch (error) {
       console.error('Upload failed:', error);
+      setUploadStatusMessage(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setStep("uploader");
     }
@@ -321,6 +401,14 @@ export default function WelcomePage() {
 
   // Navigation function to go back to uploader
   const handleGoToUploader = () => setStep("uploader");
+
+  const totalUploadProgress =
+    uploadedFiles.length === 0
+      ? 0
+      : Math.round(
+          uploadedFiles.reduce((sum, file) => sum + (uploadProgress[file.name] ?? 0), 0) /
+            uploadedFiles.length
+        );
 
   // Enhanced function to format message text with markdown support
   const formatMessage = (text: string) => {
@@ -752,14 +840,43 @@ export default function WelcomePage() {
               <p className="text-slate-300 text-lg">
                 We&apos;re analyzing your {uploadedFiles.length} file{uploadedFiles.length > 1 ? 's' : ''} to enable intelligent conversations
               </p>
+              <p className="text-slate-400 text-sm">
+                {uploadStatusMessage || "Uploading files..."}
+              </p>
+
+              <div className="max-w-xl mx-auto mt-4">
+                <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                  <span>Overall progress</span>
+                  <span>{totalUploadProgress}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-slate-800/80 overflow-hidden border border-slate-700/50">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-200"
+                    style={{ width: `${totalUploadProgress}%` }}
+                  ></div>
+                </div>
+                {uploadedFiles.length > 1 && (
+                  <p className="text-slate-500 text-xs mt-2">
+                    File {Math.min(currentUploadIndex, uploadedFiles.length)} of {uploadedFiles.length}
+                  </p>
+                )}
+              </div>
               
               {/* Show file list during upload */}
-              {uploadedFiles.length > 1 && (
+              {uploadedFiles.length > 0 && (
                 <div className="max-w-md mx-auto space-y-2 mt-6">
                   {uploadedFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between bg-slate-800/30 rounded-lg px-4 py-2 text-sm">
-                      <span className="text-slate-300 truncate flex-1">{file.name}</span>
-                      <span className="text-blue-400 ml-2">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
+                    <div key={index} className="bg-slate-800/30 rounded-lg px-4 py-2 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-slate-300 truncate flex-1 text-left">{file.name}</span>
+                        <span className="text-blue-400 ml-2">{uploadProgress[file.name] ?? 0}%</span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-slate-800 mt-2 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-200"
+                          style={{ width: `${uploadProgress[file.name] ?? 0}%` }}
+                        ></div>
+                      </div>
                     </div>
                   ))}
                 </div>
