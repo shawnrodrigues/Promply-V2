@@ -38,13 +38,6 @@ def print(*args, **kwargs):
     kwargs.setdefault("flush", True)
     return _builtins.print(*args, **kwargs)
 
-# Also ensure stderr is unbuffered for immediate visibility
-sys.stderr = __import__('io').TextIOWrapper(
-    __import__('sys').stderr.buffer,
-    encoding=sys.stderr.encoding,
-    line_buffering=True
-)
-
 # Helper function for critical logging - writes to both stdout and stderr for guaranteed visibility
 def log_step(message):
     """Log critical steps to console only"""
@@ -735,8 +728,8 @@ print("Initializing LLaMA with GPU...")
 llm = Llama(
     model_path=MODEL_PATH,
     n_gpu_layers=-1,
-    n_ctx=8192,
-    n_batch=256
+    n_ctx=4096,
+    n_batch=512
 )
 
 @app.route("/", methods=["GET"])
@@ -943,12 +936,73 @@ def format_response(raw_response):
     
     return '\n'.join(formatted)
 
+
+def build_response_profile(question):
+    """Choose answer depth and output length from query intent."""
+    q = (question or "").lower().strip()
+    words = re.findall(r"[a-z0-9']+", q)
+    word_count = len(words)
+
+    explain_keywords = {
+        "explain", "overview", "summarize", "summary", "describe",
+        "what", "why", "how", "architecture", "workflow", "simple"
+    }
+    fact_keywords = {
+        "name", "version", "date", "id", "path", "port", "token",
+        "number", "count", "author", "license"
+    }
+
+    explain_hits = sum(1 for w in words if w in explain_keywords)
+    fact_hits = sum(1 for w in words if w in fact_keywords)
+
+    is_explainer = (
+        explain_hits >= 2
+        or q.startswith("what")
+        or "simple terms" in q
+        or "in simple" in q
+    )
+    is_factoid = fact_hits >= 1 and word_count <= 12 and not is_explainer
+
+    if is_explainer:
+        detail_instruction = (
+            "Give a rich explanation. Include a direct summary first, then 5-8 specific points, "
+            "and a short practical takeaway."
+        )
+        min_words = 120
+        max_tokens = min(max(ANSWER_MAX_TOKENS, 420), 520)
+    elif is_factoid:
+        detail_instruction = "Answer directly in 1-3 sentences, then add up to 2 supporting bullet points if needed."
+        min_words = 20
+        max_tokens = min(ANSWER_MAX_TOKENS, 220)
+    else:
+        detail_instruction = (
+            "Answer clearly with a direct opening, followed by 3-5 concise supporting bullets and a one-line conclusion."
+        )
+        min_words = 70
+        max_tokens = min(max(ANSWER_MAX_TOKENS, 300), 420)
+
+    return {
+        "detail_instruction": detail_instruction,
+        "min_words": min_words,
+        "max_tokens": max_tokens,
+        "is_explainer": is_explainer,
+        "is_factoid": is_factoid,
+    }
+
 def generate_answer(context, question):
     """Generate answer from context using LLM with timeout protection"""
-    # Truncate context to fit within the model's context window.
-    # Mistral-7B with n_ctx=8192: reserve ~1200 tokens for prompt/answer,
-    # rough estimate 1 token ~ 4 chars, so cap context at ~24000 chars.
-    max_context_chars = 24000
+    profile = build_response_profile(question)
+
+    # Dynamically cap context length based on question complexity.
+    # Short questions rarely need 24k chars of context — smaller prompts
+    # are evaluated much faster by the LLM.
+    question_word_count = len(question.split())
+    if question_word_count <= 10:
+        max_context_chars = 5500
+    elif question_word_count <= 20:
+        max_context_chars = 10000
+    else:
+        max_context_chars = 18000
     if len(context) > max_context_chars:
         context = context[:max_context_chars]
         print(f"[LLM] Context truncated to {max_context_chars} chars to fit context window")
@@ -964,6 +1018,9 @@ Rules:
 - Quote key terms or definitions exactly as they appear in the document.
 - If the answer is not in the document, respond only: This information was not found in the uploaded documents.
 - Do not add outside knowledge or make assumptions beyond what the document states.
+- {profile['detail_instruction']}
+- Keep the answer grounded: prefer specific facts, terms, and behaviors from the context over generic wording.
+- Minimum answer length target: about {profile['min_words']} words when the context contains enough detail.
 
 Document Content:
 {context}
@@ -977,8 +1034,8 @@ Answer:"""
         llm_start = time.perf_counter()
         output = llm(
             prompt,
-            max_tokens=ANSWER_MAX_TOKENS,
-            temperature=0.3,
+            max_tokens=profile["max_tokens"],
+            temperature=0.2,
             top_p=0.9,
             stop=["Question:", "Document Content:", "\n\nNote:"],
             echo=False
@@ -1085,6 +1142,132 @@ def lexical_fallback_search(query, active_source_file=None):
                 best_score = score
 
     return best_match
+
+
+def _extract_query_terms(query):
+    return [
+        token for token in re.findall(r"[a-z0-9]+", query.lower())
+        if len(token) > 2 and token not in LEXICAL_STOP_WORDS
+    ]
+
+
+def _lexical_overlap_score(query_terms, text):
+    if not query_terms or not text:
+        return 0.0
+
+    lower_text = text.lower()
+    matched = sum(1 for token in query_terms if token in lower_text)
+    return matched / max(1, len(query_terms))
+
+
+def _phrase_bonus(query, text):
+    if not query or not text:
+        return 0.0
+
+    q = query.lower().strip()
+    t = text.lower()
+    if len(q) >= 8 and q in t:
+        return 1.0
+
+    words = [w for w in re.findall(r"[a-z0-9]+", q) if len(w) > 2]
+    if len(words) >= 3:
+        phrase = " ".join(words[:3])
+        if phrase in t:
+            return 0.7
+    return 0.0
+
+
+def rerank_and_select_results(results, query, limit, max_files, max_chunks_per_file=3):
+    docs = results.get("documents", [[]])[0] if results.get("documents") else []
+    ids = results.get("ids", [[]])[0] if results.get("ids") else []
+    distances = results.get("distances", [[]])[0] if results.get("distances") else []
+    metadatas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
+
+    if not docs:
+        return {
+            "context": "",
+            "context_chunks": [],
+            "distances": [],
+            "source_files": [],
+            "handwriting_source_files": [],
+            "best_distance": None,
+            "selected_count": 0,
+        }
+
+    valid_distances = [d for d in distances if isinstance(d, (int, float))]
+    min_distance = min(valid_distances) if valid_distances else 0.0
+    max_distance = max(valid_distances) if valid_distances else 1.0
+    spread = (max_distance - min_distance) if (max_distance - min_distance) > 1e-9 else 1.0
+
+    query_terms = _extract_query_terms(query)
+
+    combined = []
+    for chunk_id, chunk, distance, metadata in zip(ids, docs, distances, metadatas):
+        file_name = (
+            metadata.get("source_file")
+            if isinstance(metadata, dict) and metadata.get("source_file")
+            else "_".join(chunk_id.split("_")[:-1])
+        )
+        chunk_index = metadata.get("chunk_index") if isinstance(metadata, dict) else None
+        handwriting_source = bool(metadata.get("handwriting_source")) if isinstance(metadata, dict) else False
+
+        safe_distance = distance if isinstance(distance, (int, float)) else max_distance
+        semantic_score = 1.0 - ((safe_distance - min_distance) / spread)
+        lexical_score = _lexical_overlap_score(query_terms, chunk)
+        phrase_score = _phrase_bonus(query, chunk)
+
+        # Hybrid ranking: semantic relevance first, then lexical evidence.
+        final_score = (0.68 * semantic_score) + (0.25 * lexical_score) + (0.07 * phrase_score)
+
+        combined.append({
+            "id": chunk_id,
+            "chunk": chunk,
+            "distance": safe_distance,
+            "file": file_name,
+            "chunk_index": chunk_index,
+            "handwriting_source": handwriting_source,
+            "score": final_score,
+        })
+
+    combined.sort(key=lambda item: (-item["score"], item["distance"]))
+
+    selected = []
+    allowed_files = []
+    file_chunk_counts = {}
+    for item in combined:
+        file_name = item["file"]
+
+        if max_files and file_name not in allowed_files:
+            if len(allowed_files) >= max_files:
+                continue
+            allowed_files.append(file_name)
+
+        file_chunk_counts[file_name] = file_chunk_counts.get(file_name, 0)
+        if max_chunks_per_file and file_chunk_counts[file_name] >= max_chunks_per_file:
+            continue
+
+        selected.append(item)
+        file_chunk_counts[file_name] += 1
+
+        if len(selected) >= limit:
+            break
+
+    context_chunks = [item["chunk"] for item in selected]
+    selected_distances = [item["distance"] for item in selected]
+    context = "\n\n---\n\n".join(context_chunks)
+    source_files = list(dict.fromkeys(item["file"] for item in selected))
+    handwriting_files = list(dict.fromkeys(item["file"] for item in selected if item.get("handwriting_source")))
+    best_distance = min(selected_distances) if selected_distances else None
+
+    return {
+        "context": context,
+        "context_chunks": context_chunks,
+        "distances": selected_distances,
+        "source_files": source_files,
+        "handwriting_source_files": handwriting_files,
+        "best_distance": best_distance,
+        "selected_count": len(selected),
+    }
 
 def search_online(query):
     if OFFLINE_ONLY:
@@ -1403,7 +1586,7 @@ def chat_impl():
     print("\n" + "#"*60)
     print(f"💬 NEW QUERY RECEIVED")
     print(f"Query: {query}")
-    print(f"⚡ Model Settings: ctx=8192, max_output={ANSWER_MAX_TOKENS} tokens, batch=256")
+    print(f"⚡ Model Settings: ctx=4096, max_output={ANSWER_MAX_TOKENS} tokens, batch=512")
     print("#"*60)
     print(f"🔧 Current Mode: {'OFFLINE' if OFFLINE_ONLY else 'ONLINE'}")
     active_source_file = get_effective_source_file()
@@ -1477,73 +1660,27 @@ def chat_impl():
             kwargs["where"] = where_filter
         return collection.query(**kwargs)
 
-    def process_results(results, limit, max_files):
-        docs = results.get("documents", [[]])[0] if results.get("documents") else []
-        ids = results.get("ids", [[]])[0] if results.get("ids") else []
-        distances = results.get("distances", [[]])[0] if results.get("distances") else []
-        metadatas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
-
-        if not docs:
-            return {
-                "context": "",
-                "context_chunks": [],
-                "distances": [],
-                "source_files": [],
-                "handwriting_source_files": [],
-                "best_distance": None
-            }
-
-        combined = [
-            {
-                'id': chunk_id,
-                'chunk': chunk,
-                'distance': distance,
-                'file': (metadata.get('source_file') if isinstance(metadata, dict) and metadata.get('source_file') else "_".join(chunk_id.split("_")[:-1])),
-                'chunk_index': metadata.get('chunk_index') if isinstance(metadata, dict) else None,
-                'handwriting_source': bool(metadata.get('handwriting_source')) if isinstance(metadata, dict) else False
-            }
-            for chunk_id, chunk, distance, metadata in zip(ids, docs, distances, metadatas)
-        ]
-
-        filtered = []
-        allowed_files = []
-        for item in combined:
-            file_name = item['file']
-            if max_files and file_name not in allowed_files:
-                if len(allowed_files) >= max_files:
-                    continue
-                allowed_files.append(file_name)
-            filtered.append(item)
-
-        selected = filtered[:limit]
-        context_chunks = [item['chunk'] for item in selected]
-        selected_distances = [item['distance'] for item in selected]
-        context = "\n\n---\n\n".join(context_chunks)
-        source_files = list(dict.fromkeys(item['file'] for item in selected))
-        handwriting_files = list(dict.fromkeys(item['file'] for item in selected if item.get('handwriting_source')))
-
-        best_distance = min(selected_distances) if selected_distances else None
-
-        return {
-            "context": context,
-            "context_chunks": context_chunks,
-            "distances": selected_distances,
-            "source_files": source_files,
-            "handwriting_source_files": handwriting_files,
-            "best_distance": best_distance,
-            "selected_count": len(selected)
-        }
-
     file_cap = MAX_SOURCE_FILES_PER_QUERY
 
-    # Single broad search instead of multiple passes — faster and more reliable
-    search_limit = FULL_RESULT_LIMIT
+    # Dynamically limit search results based on query complexity.
+    # Short/simple questions don't need 20 chunks of context — fewer chunks
+    # means a shorter prompt and much faster LLM inference.
+    query_word_count = len(query.split())
+    if query_word_count <= 10:
+        dynamic_result_limit = min(5, FULL_RESULT_LIMIT)
+    elif query_word_count <= 20:
+        dynamic_result_limit = min(10, FULL_RESULT_LIMIT)
+    else:
+        dynamic_result_limit = FULL_RESULT_LIMIT
+
+    # Retrieve a broader candidate pool, then rerank for precision.
+    search_limit = min(max(dynamic_result_limit * 3, FAST_RESULT_LIMIT), SECOND_PASS_RESULT_LIMIT)
     search_started = time.perf_counter()
     results = run_vector_search(search_limit)
     search_ms = (time.perf_counter() - search_started) * 1000
     result_count = len(results.get('documents', [[]])[0]) if results.get('documents') else 0
     log_step(f"🔍 Got {result_count} results in {search_ms:.0f}ms")
-    payload = process_results(results, FULL_RESULT_LIMIT, file_cap)
+    payload = rerank_and_select_results(results, query, dynamic_result_limit, file_cap)
 
     context = payload["context"]
     context_chunks = payload["context_chunks"]
